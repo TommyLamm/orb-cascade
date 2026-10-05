@@ -15,7 +15,7 @@ export interface Particle {
 
 export class ParticleSystem {
   private pool: Particle[] = [];
-  private readonly poolSize = 300;
+  private readonly poolSize = 380;
 
   constructor() {
     for (let i = 0; i < this.poolSize; i++) {
@@ -110,23 +110,113 @@ export class ParticleSystem {
   }
 
   public emitPortalVortex(x: number, y: number, color = '#a855f7'): void {
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 14; i++) {
       const p = this.alloc();
       if (!p) break;
       const angle = Math.random() * Math.PI * 2;
-      const dist = 10 + Math.random() * 20;
+      const dist = 10 + Math.random() * 22;
       p.active = true;
       p.x = x + Math.cos(angle) * dist;
       p.y = y + Math.sin(angle) * dist;
-      p.vx = -Math.cos(angle) * 60;
-      p.vy = -Math.sin(angle) * 60;
-      p.size = 2 + Math.random() * 3;
+      p.vx = -Math.cos(angle) * 70;
+      p.vy = -Math.sin(angle) * 70;
+      p.size = 2 + Math.random() * 3.5;
       p.color = color;
       p.alpha = 1.0;
-      p.life = 0.35;
+      p.life = 0.38;
       p.maxLife = p.life;
       p.gravity = 0;
       p.drag = 0.95;
+    }
+  }
+
+  // 隕石衝擊波粒子 (全向超高速擴散光環粒子)
+  public emitMeteorShockwave(x: number, y: number): void {
+    const colors = ['#f97316', '#fbbf24', '#ffedd5', '#ef4444'];
+    for (let i = 0; i < 40; i++) {
+      const p = this.alloc();
+      if (!p) break;
+      const angle = (i / 40) * Math.PI * 2;
+      const speed = 200 + Math.random() * 280;
+      p.active = true;
+      p.x = x;
+      p.y = y;
+      p.vx = Math.cos(angle) * speed;
+      p.vy = Math.sin(angle) * speed;
+      p.size = 3.5 + Math.random() * 5;
+      p.color = colors[Math.floor(Math.random() * colors.length)];
+      p.alpha = 1.0;
+      p.life = 0.5 + Math.random() * 0.2;
+      p.maxLife = p.life;
+      p.gravity = 80;
+      p.drag = 0.93;
+    }
+  }
+
+  // 能量護盾破碎結晶粒子
+  public emitShieldBreak(x: number, y: number): void {
+    const colors = ['#38bdf8', '#818cf8', '#c084fc', '#ffffff'];
+    for (let i = 0; i < 32; i++) {
+      const p = this.alloc();
+      if (!p) break;
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 140 + Math.random() * 320;
+      p.active = true;
+      p.x = x;
+      p.y = y;
+      p.vx = Math.cos(angle) * speed;
+      p.vy = Math.sin(angle) * speed;
+      p.size = 3 + Math.random() * 4;
+      p.color = colors[Math.floor(Math.random() * colors.length)];
+      p.alpha = 1.0;
+      p.life = 0.6;
+      p.maxLife = p.life;
+      p.gravity = 200;
+      p.drag = 0.94;
+    }
+  }
+
+  // 小怪干擾釘召喚暗影法陣粒子
+  public emitMinionSpawn(x: number, y: number): void {
+    for (let i = 0; i < 20; i++) {
+      const p = this.alloc();
+      if (!p) break;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 5 + Math.random() * 25;
+      p.active = true;
+      p.x = x + Math.cos(angle) * dist;
+      p.y = y + Math.sin(angle) * dist;
+      p.vx = (Math.random() - 0.5) * 50;
+      p.vy = -60 - Math.random() * 80;
+      p.size = 2.5 + Math.random() * 3;
+      p.color = Math.random() > 0.5 ? '#9333ea' : '#dc2626';
+      p.alpha = 1.0;
+      p.life = 0.5;
+      p.maxLife = p.life;
+      p.gravity = -40; // 向上漂浮
+      p.drag = 0.96;
+    }
+  }
+
+  // 魔菇超導過載綠色電弧微粒
+  public emitOverchargeElectrics(x: number, y: number): void {
+    for (let i = 0; i < 15; i++) {
+      const p = this.alloc();
+      if (!p) break;
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 90 + Math.random() * 160;
+      p.active = true;
+      p.x = x;
+      p.y = y;
+      p.vx = Math.cos(angle) * speed;
+      p.vy = Math.sin(angle) * speed;
+      p.size = 2.5 + Math.random() * 3;
+      p.color = '#22c55e';
+      p.alpha = 1.0;
+      p.life = 0.35;
+      p.maxLife = p.life;
+      p.gravity = 100;
+      p.drag = 0.92;
     }
   }
 

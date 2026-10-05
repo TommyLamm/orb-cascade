@@ -7,10 +7,19 @@ export type GameState =
   | 'TURN_RESOLVE'
   | 'RELIC_DRAFT'
   | 'FLOOR_ADVANCE'
+  | 'PAUSED'
   | 'GAME_OVER'
   | 'VICTORY';
 
-export type PegType = 'REGULAR' | 'WEAKPOINT' | 'MUSHROOM' | 'TNT' | 'PORTAL' | 'RESET';
+export type PegType = 
+  | 'REGULAR' 
+  | 'WEAKPOINT' 
+  | 'MUSHROOM' 
+  | 'TNT' 
+  | 'PORTAL' 
+  | 'RESET'
+  | 'SHIELD_CORE'
+  | 'MINION';
 
 export interface TrajectoryPoint {
   x: number;
@@ -24,7 +33,7 @@ export interface Relic {
   description: string;
   icon: string;
   iconColor: string;
-  rarity: 'COMMON' | 'RARE' | 'LEGENDARY';
+  rarity: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
 }
 
 export interface MonsterData {
@@ -38,15 +47,21 @@ export interface MonsterData {
   attackDamage: number;
   isBoss: boolean;
   specialSkillName: string;
+  hasShield: boolean;
+  shieldMax: number;
+  shieldCurrent: number;
+  minionCooldown: number;
 }
 
 export interface OrbCascadeSave {
-  version: 1;
+  version: 2;
   highScore: number;
   highestFloor: number;
   totalRuns: number;
   totalKills: number;
   isMuted: boolean;
+  highestCombo: number;
+  bossShieldsBroken: number;
 }
 
 export interface PlayroomReadyState {

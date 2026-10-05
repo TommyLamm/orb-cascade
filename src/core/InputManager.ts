@@ -4,6 +4,7 @@ export class InputManager {
   public isAiming = false;
   public aimAngleRad = Math.PI / 2; // 正下方 90 度
   public launchRequested = false;
+  public hoverPos: { x: number; y: number } = { x: -1, y: -1 };
 
   // 點擊事件監聽（用於按鈕點擊）
   public clickEventQueue: { x: number; y: number }[] = [];
@@ -19,18 +20,24 @@ export class InputManager {
     const handleStart = (clientX: number, clientY: number) => {
       this.onFirstGesture();
       const pos = this.toVirtualCoords(clientX, clientY);
+      this.hoverPos = pos;
 
       // 先將點擊座標記錄進佇列
       this.clickEventQueue.push(pos);
 
-      // 若在發射砲台下方或盤面中瞄準
+      // 若點擊在頂部 HUD 控制區 (y <= 135)，不啟動彈珠發射瞄準
+      if (pos.y <= 135) {
+        return;
+      }
+
       this.isAiming = true;
       this.updateAim(pos.x, pos.y);
     };
 
     const handleMove = (clientX: number, clientY: number) => {
+      const pos = this.toVirtualCoords(clientX, clientY);
+      this.hoverPos = pos;
       if (this.isAiming) {
-        const pos = this.toVirtualCoords(clientX, clientY);
         this.updateAim(pos.x, pos.y);
       }
     };
@@ -55,7 +62,7 @@ export class InputManager {
       handleEnd();
     });
 
-    // 2. 觸控事件
+    // 2. 觸控事件 (增強手機操作流暢度)
     this.canvasElement.addEventListener('touchstart', (e) => {
       e.preventDefault();
       if (e.touches.length > 0) {
@@ -99,6 +106,11 @@ export class InputManager {
     if (angle > maxAngle) angle = maxAngle;
 
     this.aimAngleRad = angle;
+  }
+
+  public cancelAim(): void {
+    this.isAiming = false;
+    this.launchRequested = false;
   }
 
   public consumeLaunch(): boolean {

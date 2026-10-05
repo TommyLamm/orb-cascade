@@ -221,7 +221,67 @@ export class SoundEngine {
     });
   }
 
-  // 8. 怪物受傷音效
+  // 8. 護盾擊碎音效 (清脆水晶爆裂 + 能量解體)
+  public playShieldBreak(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    [880, 1318.5, 1760, 2637].forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.03);
+      gain.gain.setValueAtTime(0.26, now + idx * 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.03 + 0.3);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(now + idx * 0.03);
+      osc.stop(now + idx * 0.03 + 0.3);
+    });
+  }
+
+  // 9. 召喚小怪干擾釘音效 (暗黑低頻咆哮)
+  public playMinionSpawn(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.linearRampToValueAtTime(220, now + 0.2);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.35);
+
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.35);
+  }
+
+  // 10. 隕石震波音效 (重低音轟鳴)
+  public playMeteorShockwave(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(95, now);
+    osc.frequency.exponentialRampToValueAtTime(25, now + 0.5);
+
+    gain.gain.setValueAtTime(0.65, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.5);
+  }
+
+  // 11. 怪物受傷音效
   public playMonsterHit(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -241,7 +301,7 @@ export class SoundEngine {
     osc.stop(now + 0.2);
   }
 
-  // 9. 玩家扣血音效
+  // 12. 玩家扣血音效
   public playPlayerHit(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -259,5 +319,44 @@ export class SoundEngine {
     gain.connect(this.masterGain);
     osc.start(now);
     osc.stop(now + 0.28);
+  }
+
+  // 13. 選取遺物音效
+  public playSelectRelic(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    [440, 659.25, 880, 1318.5].forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.06);
+      gain.gain.setValueAtTime(0.24, now + idx * 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.06 + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(now + idx * 0.06);
+      osc.stop(now + idx * 0.06 + 0.35);
+    });
+  }
+
+  // 14. 按鈕點擊反饋音效
+  public playButtonClick(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(520, now);
+    osc.frequency.exponentialRampToValueAtTime(320, now + 0.06);
+
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.06);
   }
 }

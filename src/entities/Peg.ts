@@ -12,6 +12,7 @@ export class Peg {
   public pairedPortalId?: number;
   public glowPhase: number;
   public hitFlashTimer = 0; // 擊中瞬間的高光閃白計時
+  public minionHp = 2; // 干擾釘專用 HP
 
   constructor(
     id: number,
@@ -37,6 +38,13 @@ export class Peg {
       case 'PORTAL':
         this.radius = ORB_PHYSICS.PORTAL_RADIUS;
         break;
+      case 'SHIELD_CORE':
+        this.radius = ORB_PHYSICS.SHIELD_CORE_RADIUS;
+        break;
+      case 'MINION':
+        this.radius = ORB_PHYSICS.MINION_PEG_RADIUS;
+        this.minionHp = 2;
+        break;
       default:
         this.radius = ORB_PHYSICS.PEG_RADIUS;
         break;
@@ -44,7 +52,7 @@ export class Peg {
   }
 
   public update(dt: number): void {
-    this.glowPhase += dt * 3.0;
+    this.glowPhase += dt * 3.5;
     if (this.hitFlashTimer > 0) {
       this.hitFlashTimer -= dt;
       if (this.hitFlashTimer < 0) this.hitFlashTimer = 0;
@@ -52,6 +60,6 @@ export class Peg {
   }
 
   public triggerHitFlash(): void {
-    this.hitFlashTimer = 0.25;
+    this.hitFlashTimer = 0.28;
   }
 }
