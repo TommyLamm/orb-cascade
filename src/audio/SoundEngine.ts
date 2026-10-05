@@ -1,6 +1,7 @@
 export class SoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  private limiter: DynamicsCompressorNode | null = null;
   private isMuted = false;
 
   constructor() {
@@ -9,7 +10,17 @@ export class SoundEngine {
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(0.28, this.ctx.currentTime);
-      this.masterGain.connect(this.ctx.destination);
+
+      // 自動增益限制器 (Limiter Compressor)，徹底杜絕多顆彈珠並行碰撞爆音
+      this.limiter = this.ctx.createDynamicsCompressor();
+      this.limiter.threshold.setValueAtTime(-12, this.ctx.currentTime);
+      this.limiter.knee.setValueAtTime(25, this.ctx.currentTime);
+      this.limiter.ratio.setValueAtTime(14, this.ctx.currentTime);
+      this.limiter.attack.setValueAtTime(0.002, this.ctx.currentTime);
+      this.limiter.release.setValueAtTime(0.18, this.ctx.currentTime);
+
+      this.masterGain.connect(this.limiter);
+      this.limiter.connect(this.ctx.destination);
     }
   }
 
@@ -91,7 +102,7 @@ export class SoundEngine {
     }
 
     const dur = isWeakpoint ? 0.32 : 0.18;
-    gain.gain.setValueAtTime(isWeakpoint ? 0.4 : 0.22, now);
+    gain.gain.setValueAtTime(isWeakpoint ? 0.38 : 0.20, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
     osc.connect(gain);
@@ -162,7 +173,7 @@ export class SoundEngine {
     osc.stop(now + 0.16);
   }
 
-  // 5. 集球桶捕獲音效 (清脆大三和弦 Jingle)
+  // 5. 普通集球桶捕獲音效
   public playBucketCatch(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -181,7 +192,127 @@ export class SoundEngine {
     });
   }
 
-  // 6. 傳送門穿越音效
+  // 6. 專屬動態 Jackpot 大獎勝利音效 (華麗琶音 + 勝利鈴音)
+  public playJackpotWin(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    // 璀璨大三和弦琶音 C5 -> E5 -> G5 -> C6 -> E6
+    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98];
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.045);
+      gain.gain.setValueAtTime(0.28, now + idx * 0.045);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.045 + 0.4);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(now + idx * 0.045);
+      osc.stop(now + idx * 0.045 + 0.4);
+    });
+
+    // 清脆鈴鐺泛音
+    const bellOsc = this.ctx.createOscillator();
+    const bellGain = this.ctx.createGain();
+    bellOsc.type = 'triangle';
+    bellOsc.frequency.setValueAtTime(2093.0, now + 0.2);
+    bellGain.gain.setValueAtTime(0.32, now + 0.2);
+    bellGain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    bellOsc.connect(bellGain);
+    bellGain.connect(this.masterGain);
+    bellOsc.start(now + 0.2);
+    bellOsc.stop(now + 0.65);
+  }
+
+  // 7. 首領 Boss 暴怒咆哮音效 (超低頻失真撕裂巨響)
+  public playBossRoar(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(55, now);
+    osc.frequency.linearRampToValueAtTime(140, now + 0.18);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.65);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.frequency.exponentialRampToValueAtTime(160, now + 0.65);
+
+    gain.gain.setValueAtTime(0.58, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.65);
+  }
+
+  // 8. 寒霜晶球冰晶破碎音效
+  public playFrostShatter(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    [1480, 1860, 2340].forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.02);
+      gain.gain.setValueAtTime(0.24, now + idx * 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.02 + 0.16);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(now + idx * 0.02);
+      osc.stop(now + idx * 0.02 + 0.16);
+    });
+  }
+
+  // 9. 混沌雷球電弧跳躍穿透音效
+  public playLightningArc(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.linearRampToValueAtTime(220, now + 0.12);
+
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  // 10. 虛空黑球重力扭曲引力音效
+  public playVoidWarp(): void {
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(240, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.28);
+
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.28);
+  }
+
+  // 11. 傳送門穿越音效
   public playPortal(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -202,7 +333,7 @@ export class SoundEngine {
     osc.stop(now + 0.25);
   }
 
-  // 7. 重置金釘全場共鳴音效
+  // 12. 重置金釘全場共鳴音效
   public playReset(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -221,7 +352,7 @@ export class SoundEngine {
     });
   }
 
-  // 8. 護盾擊碎音效 (清脆水晶爆裂 + 能量解體)
+  // 13. 護盾擊碎音效
   public playShieldBreak(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -240,7 +371,7 @@ export class SoundEngine {
     });
   }
 
-  // 9. 召喚小怪干擾釘音效 (暗黑低頻咆哮)
+  // 14. 召喚小怪干擾釘音效
   public playMinionSpawn(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -261,7 +392,7 @@ export class SoundEngine {
     osc.stop(now + 0.35);
   }
 
-  // 10. 隕石震波音效 (重低音轟鳴)
+  // 15. 隕石震波音效
   public playMeteorShockwave(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -281,7 +412,7 @@ export class SoundEngine {
     osc.stop(now + 0.5);
   }
 
-  // 11. 怪物受傷音效
+  // 16. 怪物受傷音效
   public playMonsterHit(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -301,7 +432,7 @@ export class SoundEngine {
     osc.stop(now + 0.2);
   }
 
-  // 12. 玩家扣血音效
+  // 17. 玩家扣血音效
   public playPlayerHit(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -321,7 +452,7 @@ export class SoundEngine {
     osc.stop(now + 0.28);
   }
 
-  // 13. 選取遺物音效
+  // 18. 選取遺物音效
   public playSelectRelic(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;
@@ -340,7 +471,7 @@ export class SoundEngine {
     });
   }
 
-  // 14. 按鈕點擊反饋音效
+  // 19. 按鈕點擊反饋音效
   public playButtonClick(): void {
     if (!this.ctx || !this.masterGain || this.isMuted) return;
     const now = this.ctx.currentTime;

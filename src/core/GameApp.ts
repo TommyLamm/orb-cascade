@@ -1,5 +1,5 @@
-import { ORB_PHYSICS, COMBO_LADDER } from './Constants';
-import { GameState, Relic, TrajectoryPoint, OrbCascadeSave } from '../types';
+import { ORB_PHYSICS, COMBO_LADDER, CHALLENGE_MODIFIERS, SPECIAL_ORBS_CONFIG } from './Constants';
+import { GameState, Relic, TrajectoryPoint, OrbCascadeSave, OrbType, GameMode, ChallengeModifier } from '../types';
 import { Peg } from '../entities/Peg';
 import { Orb, CollisionEvent } from '../entities/Orb';
 import { Bucket } from '../entities/Bucket';
@@ -22,7 +22,7 @@ export class GameApp {
   private pegs: Peg[] = [];
   private orbs: Orb[] = [];
   private bucket: Bucket = new Bucket();
-  private dungeon: DungeonProgress = new DungeonProgress();
+  private dungeon: DungeonProgress = new DungeonProgress('STANDARD');
   private relicManager: RelicManager = new RelicManager();
 
   private soundEngine: SoundEngine;
@@ -33,6 +33,14 @@ export class GameApp {
   private inputManager: InputManager;
   private gameLoop: GameLoop;
   private saveData: OrbCascadeSave;
+
+  // 遊戲模式與突變因子
+  private selectedGameMode: GameMode = 'STANDARD';
+  private activeModifiers: readonly ChallengeModifier[] = [];
+
+  // 特殊彈珠
+  private equippedOrb: OrbType = 'STANDARD';
+  private unlockedOrbs: OrbType[] = ['STANDARD', 'FROST', 'LIGHTNING', 'VOID'];
 
   // 當前回合戰鬥狀態數據
   private comboHits = 0;
@@ -53,6 +61,10 @@ export class GameApp {
     this.renderer = new CanvasRenderer(canvas);
     this.saveData = StorageManager.load();
 
+    // 讀取存檔中的彈珠與設定
+    this.equippedOrb = this.saveData.equippedOrb || 'STANDARD';
+    this.unlockedOrbs = this.saveData.unlockedOrbs || ['STANDARD', 'FROST', 'LIGHTNING', 'VOID'];
+
     // 同步靜音設定
     this.soundEngine.setMuted(this.saveData.isMuted);
 
@@ -72,6 +84,9 @@ export class GameApp {
   }
 
   private update = (dt: number): void => {
+    // 阻尼輸入平滑演進
+    this.inputManager.update(dt);
+
     // 處理點擊與介面按鈕交互
     this.handleInputClicks();
 
@@ -97,7 +112,7 @@ export class GameApp {
     }
 
     if (this.state === 'PAUSED') {
-      return; // 暫停時不演進物理和怪物
+      return;
     }
 
     for (const peg of this.pegs) {
@@ -173,10 +188,41 @@ export class GameApp {
           this.state = 'TITLE';
         }
       } else if (this.state === 'TITLE') {
-        // START RUN 按鈕: [180, 580, 360, 68]
-        if (x >= 180 && x <= 540 && y >= 580 && y <= 648) {
+        // 模式選擇雙切換按鈕 [160, 490, 190, 50] vs [370, 490, 190, 50]
+        if (y >= 490 && y <= 540) {
+          if (x >= 160 && x <= 350) {
+            this.soundEngine.playButtonClick();
+            this.selectedGameMode = 'STANDARD';
+          } else if (x >= 370 && x <= 560) {
+            this.soundEngine.playButtonClick();
+            this.selectedGameMode = 'ENDLESS';
+          }
+        }
+        // START RUN 按鈕: [180, 565, 360, 68]
+        if (x >= 180 && x <= 540 && y >= 565 && y <= 635) {
           this.soundEngine.playButtonClick();
           this.startNewRun();
+        }
+      } else if (this.state === 'BATTLE_AIM') {
+        // 特殊彈珠切換按鈕組 [170, 195, 380, 34]
+        if (y >= 195 && y <= 230) {
+          const startX = 170;
+          const btnW = 90;
+          const gap = 6;
+          for (let i = 0; i < SPECIAL_ORBS_CONFIG.length; i++) {
+            const bx = startX + i * (btnW + gap);
+            if (x >= bx && x <= bx + btnW) {
+              const targetType = SPECIAL_ORBS_CONFIG[i].type;
+              if (this.equippedOrb !== targetType) {
+                this.soundEngine.playButtonClick();
+                this.equippedOrb = targetType;
+                this.saveData.equippedOrb = targetType;
+                StorageManager.save(this.saveData);
+                this.combatText.spawn(`裝備彈珠: ${SPECIAL_ORBS_CONFIG[i].name}`, 360, 245, SPECIAL_ORBS_CONFIG[i].color, 16);
+              }
+              break;
+            }
+          }
         }
       } else if (this.state === 'RELIC_DRAFT') {
         // 三選一卡牌按鈕: y 從 360 開始，間隔 165，高 138
@@ -214,10 +260,22 @@ export class GameApp {
   }
 
   private async startNewRun(): Promise<void> {
-    this.dungeon.resetRun();
+    const isEndless = this.selectedGameMode === 'ENDLESS';
+    this.activeModifiers = isEndless ? CHALLENGE_MODIFIERS : [];
+
+    let scoreMult = 1.0;
+    if (isEndless) {
+      for (const m of this.activeModifiers) {
+        scoreMult *= m.scoreBonusMultiplier;
+      }
+    }
+
+    this.dungeon.resetRun(this.selectedGameMode, scoreMult);
     this.relicManager.reset();
     this.bucket.reset();
-    this.pegs = PegboardGenerator.generate(1);
+
+    const extraShield = isEndless && this.activeModifiers.some((m) => m.id === 'HARDENED_PEGS');
+    this.pegs = PegboardGenerator.generate(1, extraShield);
     this.orbs = [];
     this.comboHits = 0;
     this.turnScore = 0;
@@ -245,8 +303,8 @@ export class GameApp {
       p.isHitThisTurn = false;
     }
 
-    // 建立主力彈珠
-    const mainOrb = new Orb(ORB_PHYSICS.CANNON_X, ORB_PHYSICS.CANNON_Y, vx, vy);
+    // 建立主力彈珠 (帶有專屬類型)
+    const mainOrb = new Orb(ORB_PHYSICS.CANNON_X, ORB_PHYSICS.CANNON_Y, vx, vy, this.equippedOrb);
     if (this.relicManager.hasRelic('piercing-spear')) {
       mainOrb.piercingCharges = 2;
     }
@@ -275,7 +333,7 @@ export class GameApp {
         const speed = ORB_PHYSICS.LAUNCH_SPEED * 0.96;
         const vx = Math.cos(angle) * speed;
         const vy = Math.sin(angle) * speed;
-        const secondOrb = new Orb(ORB_PHYSICS.CANNON_X, ORB_PHYSICS.CANNON_Y, vx, vy, true);
+        const secondOrb = new Orb(ORB_PHYSICS.CANNON_X, ORB_PHYSICS.CANNON_Y, vx, vy, this.equippedOrb, true);
         this.orbs.push(secondOrb);
         this.soundEngine.playShoot();
       }
@@ -287,10 +345,11 @@ export class GameApp {
       const orb = this.orbs[i];
       orb.update(dt, this.pegs, restitutionMult, (event) => this.handleCollision(event, orb));
 
-      // 集球桶接球檢測 (Free Ball)
-      if (!orb.isDead && this.bucket.containsOrb(orb.x, orb.y, orb.radius)) {
+      // 集球桶接球檢測 (Dynamic Bucket Jackpot)
+      const catchResult = this.bucket.checkCatch(orb.x, orb.y, orb.radius);
+      if (!orb.isDead && catchResult.caught) {
         orb.isDead = true;
-        this.handleBucketCatch(orb);
+        this.handleBucketCatch(orb, catchResult.reward);
       }
     }
 
@@ -316,7 +375,6 @@ export class GameApp {
       this.renderer.triggerShake(5);
       this.particles.emitSparks(event.x, event.y, '#e040fb', 16, 1.3);
 
-      // 新遺物「過載電池」：魔菇彈跳蓄積超導電能，下一次彈跳傷害翻倍
       if (this.relicManager.hasRelic('overcharge-battery')) {
         orb.isOvercharged = true;
         this.particles.emitOverchargeElectrics(event.x, event.y);
@@ -345,7 +403,6 @@ export class GameApp {
       this.particles.emitCritStars(event.x, event.y, 20);
       this.combatText.spawn('★ RESET ALL! ★', event.x, event.y - 20, '#facc15', 22, true);
 
-      // 全場已擊中的釘子重現
       for (const p of this.pegs) {
         if (!p.isDestroyed) {
           p.isHitThisTurn = false;
@@ -355,7 +412,7 @@ export class GameApp {
       return;
     }
 
-    // 4. TNT 炸藥桶引爆 (含新遺物「稜鏡碎屑」分裂微型爆破子彈)
+    // 4. TNT 炸藥桶引爆 (彩虹星芒與盤面烙印反饋)
     if (event.type === 'EXPLOSION') {
       this.triggerTntExplosion(peg, orb);
       return;
@@ -364,9 +421,10 @@ export class GameApp {
     // 5. Boss 能量護盾核心釘 (SHIELD_CORE)
     if (event.type === 'SHIELD_CORE') {
       peg.isDestroyed = true;
-      this.particles.emitShieldBreak(event.x, event.y);
-      const shieldRes = this.dungeon.currentMonster.damageShield(1);
+      this.particles.emitRainbowStarburst(event.x, event.y, 28);
+      this.renderer.addGlowDecal(event.x, event.y, '#38bdf8', 22);
 
+      const shieldRes = this.dungeon.currentMonster.damageShield(1);
       if (shieldRes.isBroken) {
         this.soundEngine.playShieldBreak();
         this.renderer.triggerShake(18);
@@ -388,7 +446,8 @@ export class GameApp {
       this.soundEngine.playMonsterHit();
       if (peg.minionHp <= 0) {
         peg.isDestroyed = true;
-        this.particles.emitSparks(event.x, event.y, '#e11d48', 16);
+        this.particles.emitRainbowStarburst(event.x, event.y, 24);
+        this.renderer.addGlowDecal(event.x, event.y, '#e11d48', 18);
         this.combatText.spawn('💀 MINION SLAIN! +60', event.x, event.y - 15, '#f43f5e', 18, true);
         this.turnScore += 60;
       } else {
@@ -403,12 +462,11 @@ export class GameApp {
       peg.isHitThisTurn = true;
       this.comboHits++;
 
-      // 最高 Combo 紀錄即時同步
       if (this.comboHits > (this.saveData.highestCombo || 0)) {
         this.saveData.highestCombo = this.comboHits;
       }
 
-      // 新遺物「吸血尖牙」：每累計觸發 15 次碰撞為玩家恢復 1 點魔能
+      // 吸血尖牙遺物
       if (this.relicManager.hasRelic('vampire-fang')) {
         this.vampireHitCounter++;
         if (this.vampireHitCounter >= 15) {
@@ -419,24 +477,51 @@ export class GameApp {
         }
       }
 
-      // 靈魂汲取遺物：每 8 次碰撞回血 1 點
+      // 靈魂汲取遺物
       if (this.relicManager.hasRelic('soul-siphon') && this.comboHits % 8 === 0) {
         this.dungeon.playerHp = Math.min(this.dungeon.maxPlayerHp, this.dungeon.playerHp + 1);
         this.combatText.spawn('+1 HP', 80, 50, '#4ade80', 16, true);
       }
 
-      // 分裂核心遺物：撞擊 10 次分裂一顆子球
+      // 分裂核心遺物
       if (this.relicManager.hasRelic('split-core') && this.comboHits === 10) {
-        const subOrb = new Orb(orb.x, orb.y, -orb.vx * 0.8, orb.vy * 0.8, true);
+        const subOrb = new Orb(orb.x, orb.y, -orb.vx * 0.8, orb.vy * 0.8, orb.orbType, true);
         this.orbs.push(subOrb);
         this.combatText.spawn('SPLIT!', orb.x, orb.y - 15, '#00f3ff', 18, true);
       }
 
-      // 計算基礎傷害與音效
+      // 計算基礎傷害
       const isWeakpoint = peg.type === 'WEAKPOINT';
       let baseDmg = isWeakpoint ? 45 : 15;
 
-      // 新遺物「過載電池」：若處於過載狀態，此擊傷害翻倍！
+      // 寒霜晶球專屬易傷機制 (Frost Orb):
+      // 若釘子原本已處於冰凍狀態，下一次撞擊傷害 250%！
+      let isFrostShatter = false;
+      if (peg.isFrostbitten) {
+        baseDmg = Math.floor(baseDmg * 2.5);
+        isFrostShatter = true;
+        this.soundEngine.playFrostShatter();
+        this.particles.emitFrostShatter(peg.x, peg.y, 22);
+        this.combatText.spawn('❄️ FROST SHATTER! 2.5X', peg.x, peg.y - 25, '#38bdf8', 20, true);
+      } else if (orb.orbType === 'FROST') {
+        peg.applyFrost();
+        this.particles.emitFrostShatter(peg.x, peg.y, 10);
+      }
+
+      // 混沌雷球專屬機制 (Lightning Orb):
+      // 每次彈跳在空中隨機跳躍電弧穿透 2 顆遠處釘子
+      if (orb.orbType === 'LIGHTNING') {
+        this.triggerLightningArcs(peg);
+      }
+
+      // 虛空黑球專屬機制 (Void Orb):
+      // 引力壓縮傷害額外 +30%
+      if (orb.orbType === 'VOID') {
+        baseDmg = Math.floor(baseDmg * 1.3);
+        this.soundEngine.playVoidWarp();
+      }
+
+      // 過載電池加成
       let isOverchargedHit = false;
       if (orb.isOvercharged) {
         baseDmg *= 2;
@@ -457,13 +542,36 @@ export class GameApp {
         this.particles.emitCritStars(event.x, event.y, 16);
         this.combatText.spawnCritDamage(baseDmg, event.x, event.y - 15);
 
-        // 雷霆連鎖遺物：擊中弱點引爆鄰近 3 顆釘子
         if (this.relicManager.hasRelic('chain-zap')) {
           this.triggerChainZap(peg);
         }
-      } else {
+      } else if (!isFrostShatter) {
         this.particles.emitSparks(event.x, event.y, '#00f3ff', 8);
         this.combatText.spawnNormalDamage(baseDmg, event.x, event.y - 10);
+      }
+    }
+  }
+
+  // 混沌雷球跳躍電弧穿透 2 顆遠處釘子
+  private triggerLightningArcs(originPeg: Peg): void {
+    let count = 0;
+    for (const p of this.pegs) {
+      if (count >= 2) break;
+      if (!p.isHitThisTurn && !p.isDestroyed && p.id !== originPeg.id) {
+        const dx = p.x - originPeg.x;
+        const dy = p.y - originPeg.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 50 && dist < 260) {
+          p.isHitThisTurn = true;
+          p.triggerHitFlash();
+          this.comboHits++;
+          this.turnScore += 22;
+
+          this.soundEngine.playLightningArc();
+          this.particles.emitLightningArcParticles(originPeg.x, originPeg.y, p.x, p.y, 14);
+          this.combatText.spawn('⚡ ARC +22', p.x, p.y - 15, '#facc15', 16);
+          count++;
+        }
       }
     }
   }
@@ -504,6 +612,8 @@ export class GameApp {
     this.renderer.triggerShake(12);
     this.gameLoop.triggerHitstop(60);
     this.particles.emitExplosion(tntPeg.x, tntPeg.y, 35);
+    this.particles.emitRainbowStarburst(tntPeg.x, tntPeg.y, 26);
+    this.renderer.addGlowDecal(tntPeg.x, tntPeg.y, '#ff4400', 25);
     this.combatText.spawn('BOOM! +150', tntPeg.x, tntPeg.y - 20, '#ff4400', 24, true);
 
     const hasResonance = this.relicManager.hasRelic('blast-resonance');
@@ -511,15 +621,13 @@ export class GameApp {
     const blastDmg = hasResonance ? 240 : 150;
     this.turnScore += blastDmg;
 
-    // 新遺物「稜鏡碎屑」：彈珠撞擊 TNT 時朝兩側分裂出 2 顆微型爆破子彈
     if (this.relicManager.hasRelic('prism-splinter')) {
-      const splinter1 = new Orb(tntPeg.x, tntPeg.y - 10, -520, -420, false, true);
-      const splinter2 = new Orb(tntPeg.x, tntPeg.y - 10, 520, -420, false, true);
+      const splinter1 = new Orb(tntPeg.x, tntPeg.y - 10, -520, -420, this.equippedOrb, false, true);
+      const splinter2 = new Orb(tntPeg.x, tntPeg.y - 10, 520, -420, this.equippedOrb, false, true);
       this.orbs.push(splinter1, splinter2);
       this.combatText.spawn('💎 PRISM SPLINTER x2!', tntPeg.x, tntPeg.y - 45, '#06b6d4', 20, true);
     }
 
-    // 給予主力彈珠爆炸衝量
     if (triggerOrb) {
       const dx = triggerOrb.x - tntPeg.x;
       const dy = triggerOrb.y - tntPeg.y;
@@ -528,7 +636,6 @@ export class GameApp {
       triggerOrb.vy -= 360;
     }
 
-    // 廣度優先範圍引爆檢測
     for (const p of this.pegs) {
       if (p.isDestroyed || p.id === tntPeg.id) continue;
       const dx = p.x - tntPeg.x;
@@ -537,7 +644,6 @@ export class GameApp {
 
       if (distSq <= blastRadius * blastRadius) {
         if (p.type === 'TNT') {
-          // 連鎖引爆
           window.setTimeout(() => {
             if (!p.isDestroyed) this.triggerTntExplosion(p);
           }, 80);
@@ -575,23 +681,39 @@ export class GameApp {
     }
   }
 
-  private handleBucketCatch(orb: Orb): void {
-    this.soundEngine.playBucketCatch();
-    this.particles.emitCritStars(orb.x, orb.y, 22);
-    this.combatText.spawn('★ FREE BALL! +500 ★', 360, 1150, '#10b981', 22, true);
+  // 底部動態集球槽位接球 (Dynamic Bucket Jackpot)
+  private handleBucketCatch(orb: Orb, reward?: { type: string; label: string }): void {
+    const rewardType = reward?.type || 'FREE_BALL';
 
-    // 增加分數
-    this.turnScore += 500;
+    // 激發金色禮花
+    this.particles.emitJackpotFireworks(orb.x, orb.y, 48);
 
-    // 點金魔手遺物：集球桶捕獲時傷害乘區 +30%
+    if (rewardType === 'SCORE_5X') {
+      this.soundEngine.playJackpotWin();
+      this.renderer.triggerShake(10);
+      this.turnScore += 1500;
+      this.turnScore = Math.floor(this.turnScore * 1.5);
+      this.combatText.spawn('★ 5X SCORE JACKPOT! +1500 ★', 360, 1140, '#facc15', 26, true);
+    } else if (rewardType === 'MANA_3X') {
+      this.soundEngine.playJackpotWin();
+      this.renderer.triggerShake(8);
+      this.dungeon.manaOrbs = Math.min(this.dungeon.maxManaOrbs + 4, this.dungeon.manaOrbs + 3);
+      this.turnScore += 600;
+      this.combatText.spawn('★ 3X MANA JACKPOT! +3 ORBS ★', 360, 1140, '#38bdf8', 24, true);
+    } else {
+      this.soundEngine.playBucketCatch();
+      this.turnScore += 500;
+      this.combatText.spawn('★ FREE BALL! +500 ★', 360, 1140, '#10b981', 22, true);
+    }
+
+    // 點金魔手遺物：集球桶捕獲時傷害乘區額外 +30%
     if (this.relicManager.hasRelic('midas-touch')) {
       this.turnScore = Math.floor(this.turnScore * 1.3);
-      this.combatText.spawn('MIDAS +30%!', 360, 1120, '#facc15', 20, true);
+      this.combatText.spawn('MIDAS +30%!', 360, 1110, '#facc15', 20, true);
     }
   }
 
   private resolveTurn(): void {
-    // 檢查是否有彈珠被集球桶捕獲過
     let mult = 1.0;
     for (const step of COMBO_LADDER) {
       if (this.comboHits >= step.minHits && this.comboHits <= step.maxHits) {
@@ -600,23 +722,28 @@ export class GameApp {
       }
     }
 
-    // 共鳴音叉遺物：倍率增長速度提升 40%
     if (this.relicManager.hasRelic('tuning-fork')) {
       mult = Math.min(5.0, mult * 1.4);
     }
 
-    // 霜凍新星遺物：Combo >= 20 怪物攻擊倒數 +1
     if (this.relicManager.hasRelic('frost-nova') && this.comboHits >= 20) {
       this.dungeon.currentMonster.data.currentCountdown++;
       this.combatText.spawn('❄️ FROZEN! +1 TURN', 650, 70, '#38bdf8', 18, true);
     }
 
-    const rawDamage = Math.floor(this.turnScore * mult);
+    const rawDamage = Math.floor(this.turnScore * mult * this.dungeon.scoreMultiplier);
     this.dungeon.score += rawDamage;
 
-    // 扣除怪物 HP (包含 Boss 能量護盾格擋判斷)
-    const { actualDmg, isShieldDeflected } = this.dungeon.currentMonster.takeDamage(rawDamage);
+    // 扣除怪物 HP (含 Boss 狂暴觸發演出)
+    const { actualDmg, isShieldDeflected, justEnraged } = this.dungeon.currentMonster.takeDamage(rawDamage);
     this.soundEngine.playMonsterHit();
+
+    if (justEnraged) {
+      this.soundEngine.playBossRoar();
+      this.renderer.triggerShake(22);
+      this.particles.emitBossRoarShockwave(360, 240);
+      this.combatText.spawn('⚠️ BOSS ENRAGED! 狂暴狀態! ⚠️', 360, 260, '#ff0033', 30, true);
+    }
 
     if (isShieldDeflected) {
       this.combatText.spawn(`🛡️ DEFLECTED! -${actualDmg}`, 640, 42, '#38bdf8', 22, true);
@@ -624,17 +751,15 @@ export class GameApp {
       this.combatText.spawnCritDamage(actualDmg, 650, 40);
     }
 
-    // 檢查本次回合是否所有主力彈珠均落溝死區（若非被集球桶接住，則扣除 1 顆彈珠）
+    // 檢查本次回合是否主力彈珠均落溝死區 (集球桶接住則保留)
     const isFreeBall = this.orbs.some((o) => !o.isMiniBullet && this.bucket.containsOrb(o.x, o.y, o.radius));
     if (!isFreeBall) {
       this.dungeon.manaOrbs = Math.max(0, this.dungeon.manaOrbs - 1);
     }
 
-    // 判斷怪物生死
     if (!this.dungeon.currentMonster.isAlive()) {
       this.handleMonsterKilled();
     } else {
-      // 怪物存活，推進攻擊倒數，並檢測是否定時召喚小怪干擾釘
       const attackInfo = this.dungeon.currentMonster.advanceTurn();
 
       if (attackInfo.shouldSpawnMinion) {
@@ -655,7 +780,6 @@ export class GameApp {
         this.combatText.spawn(`MONSTER ATTACK! -${attackInfo.damage}`, 100, 40, '#ef4444', 22, true);
       }
 
-      // 檢查玩家是否陣亡或彈珠耗盡
       if (this.dungeon.playerHp <= 0 || (this.dungeon.manaOrbs <= 0 && this.dungeon.currentMonster.isAlive())) {
         this.handleGameOver();
       } else {
@@ -682,7 +806,8 @@ export class GameApp {
 
     // 進入下一層秘境
     this.dungeon.advanceFloor();
-    this.pegs = PegboardGenerator.generate(this.dungeon.currentFloor);
+    const extraShield = this.selectedGameMode === 'ENDLESS' && this.activeModifiers.some((m) => m.id === 'HARDENED_PEGS');
+    this.pegs = PegboardGenerator.generate(this.dungeon.currentFloor, extraShield);
     this.state = 'BATTLE_AIM';
   }
 
@@ -690,11 +815,20 @@ export class GameApp {
     this.state = 'GAME_OVER';
     await PlayroomService.finishRun(this.currentRunId, this.dungeon.score);
 
-    if (this.dungeon.score > this.saveData.highScore) {
-      this.saveData.highScore = this.dungeon.score;
-    }
-    if (this.dungeon.currentFloor > this.saveData.highestFloor) {
-      this.saveData.highestFloor = this.dungeon.currentFloor;
+    if (this.selectedGameMode === 'ENDLESS') {
+      if (this.dungeon.score > (this.saveData.endlessHighScore || 0)) {
+        this.saveData.endlessHighScore = this.dungeon.score;
+      }
+      if (this.dungeon.currentFloor > (this.saveData.endlessHighestFloor || 1)) {
+        this.saveData.endlessHighestFloor = this.dungeon.currentFloor;
+      }
+    } else {
+      if (this.dungeon.score > this.saveData.highScore) {
+        this.saveData.highScore = this.dungeon.score;
+      }
+      if (this.dungeon.currentFloor > this.saveData.highestFloor) {
+        this.saveData.highestFloor = this.dungeon.currentFloor;
+      }
     }
     StorageManager.save(this.saveData);
   }
@@ -738,7 +872,6 @@ export class GameApp {
 
       let collided = false;
 
-      // 側壁反彈預測
       if (posX <= ORB_PHYSICS.WALL_LEFT + ORB_PHYSICS.ORB_RADIUS) {
         posX = ORB_PHYSICS.WALL_LEFT + ORB_PHYSICS.ORB_RADIUS;
         velX = -velX * 0.85;
@@ -749,14 +882,12 @@ export class GameApp {
         collided = true;
       }
 
-      // 天花板反彈預測
       if (posY <= ORB_PHYSICS.CEILING_TOP + ORB_PHYSICS.ORB_RADIUS) {
         posY = ORB_PHYSICS.CEILING_TOP + ORB_PHYSICS.ORB_RADIUS;
         velY = -velY * 0.85;
         collided = true;
       }
 
-      // 釘子碰撞預測
       if (!collided) {
         for (let i = 0; i < this.pegs.length; i++) {
           const peg = this.pegs[i];
@@ -814,7 +945,11 @@ export class GameApp {
       this.particles,
       this.combatText,
       this.saveData,
-      this.draftRelics
+      this.draftRelics,
+      this.equippedOrb,
+      this.unlockedOrbs,
+      this.selectedGameMode,
+      this.activeModifiers
     );
   };
 }

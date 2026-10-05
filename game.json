@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "orb-cascade",
   "name": "彈珠秘境：連鎖共鳴",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "物理彈射與柏青哥釘盤的奇幻碰撞！拉桿瞄準發射魔法彈珠，引爆弱點釘與炸藥桶，奏響清脆音階連鎖，收集肉鴿神祕遺物擊潰秘境巨獸！",
   "author": "Playroom Arcade Studio",
   "entry": "index.html",

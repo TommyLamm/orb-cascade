@@ -6,17 +6,31 @@ export class Monster {
   public hurtTimer = 0; // 受傷紅光動畫
   public attackTimer = 0; // 反擊前搖動畫
   public shieldFlashTimer = 0; // 護盾受創藍光動畫
+  public isEnraged = false; // Boss 血量低於 30% 狂暴狀態
+  public rageAuraPhase = 0;
   private minionTurnCounter = 0;
 
-  constructor(floorLevel: number) {
+  constructor(floorLevel: number, isEndless = false, endlessHpMultiplier = 1.0) {
     const configIndex = Math.min(floorLevel - 1, MONSTERS_CONFIG.length - 1);
     const cfg = MONSTERS_CONFIG[configIndex];
 
+    const maxHp = isEndless
+      ? Math.floor(cfg.maxHp * endlessHpMultiplier)
+      : cfg.maxHp;
+
+    const attackDamage = isEndless
+      ? Math.floor(cfg.attackDamage * (1 + (floorLevel - 1) * 0.12))
+      : cfg.attackDamage;
+
     this.data = {
       ...cfg,
-      currentHp: cfg.maxHp,
+      floor: floorLevel,
+      maxHp,
+      currentHp: maxHp,
+      attackDamage,
       currentCountdown: cfg.attackInterval,
       shieldCurrent: cfg.shieldMax,
+      isEnraged: false,
     };
   }
 
@@ -32,6 +46,9 @@ export class Monster {
     if (this.shieldFlashTimer > 0) {
       this.shieldFlashTimer -= dt;
       if (this.shieldFlashTimer < 0) this.shieldFlashTimer = 0;
+    }
+    if (this.isEnraged) {
+      this.rageAuraPhase += dt * 8;
     }
   }
 
@@ -52,7 +69,7 @@ export class Monster {
     return { isBroken, remaining: this.data.shieldCurrent };
   }
 
-  public takeDamage(dmg: number): { actualDmg: number; isShieldDeflected: boolean } {
+  public takeDamage(dmg: number): { actualDmg: number; isShieldDeflected: boolean; justEnraged: boolean } {
     let actualDmg = Math.max(1, Math.floor(dmg));
     const isShieldDeflected = this.isShieldActive();
 
@@ -64,7 +81,20 @@ export class Monster {
 
     this.data.currentHp = Math.max(0, this.data.currentHp - actualDmg);
     this.hurtTimer = 0.35;
-    return { actualDmg, isShieldDeflected };
+
+    let justEnraged = false;
+    // 首領血量低於 30% 觸發暴怒
+    if (this.data.isBoss && !this.isEnraged && this.data.currentHp > 0 && this.data.currentHp / this.data.maxHp <= 0.30) {
+      this.isEnraged = true;
+      this.data.isEnraged = true;
+      justEnraged = true;
+      // 狂暴縮短攻擊間隔
+      this.data.attackInterval = Math.max(1, this.data.attackInterval - 1);
+      this.data.currentCountdown = Math.min(this.data.currentCountdown, this.data.attackInterval);
+      this.data.attackDamage = Math.floor(this.data.attackDamage * 1.25);
+    }
+
+    return { actualDmg, isShieldDeflected, justEnraged };
   }
 
   public advanceTurn(): { shouldAttack: boolean; damage: number; shouldSpawnMinion: boolean } {

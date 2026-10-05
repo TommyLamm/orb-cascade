@@ -1,5 +1,6 @@
 import { ORB_PHYSICS } from '../core/Constants';
 import { Peg } from './Peg';
+import { OrbType } from '../types';
 
 export interface CollisionEvent {
   type: 'PEG' | 'WALL' | 'PORTAL' | 'EXPLOSION' | 'MUSHROOM' | 'RESET' | 'SHIELD_CORE' | 'MINION';
@@ -15,6 +16,7 @@ export class Orb {
   public vx: number;
   public vy: number;
   public radius = ORB_PHYSICS.ORB_RADIUS;
+  public orbType: OrbType = 'STANDARD';
   public isSecondary = false; // 是否為分裂的次級子球
   public isMiniBullet = false; // 稜鏡碎屑分裂的微型爆破子彈
   public isDead = false;
@@ -41,6 +43,7 @@ export class Orb {
     y: number,
     vx: number,
     vy: number,
+    orbType: OrbType = 'STANDARD',
     isSecondary = false,
     isMiniBullet = false
   ) {
@@ -48,6 +51,7 @@ export class Orb {
     this.y = y;
     this.vx = vx;
     this.vy = vy;
+    this.orbType = orbType;
     this.isSecondary = isSecondary;
     this.isMiniBullet = isMiniBullet;
 
@@ -55,6 +59,10 @@ export class Orb {
       this.radius = ORB_PHYSICS.ORB_RADIUS * 0.55;
     } else if (isSecondary) {
       this.radius = ORB_PHYSICS.ORB_RADIUS * 0.75;
+    } else if (orbType === 'VOID') {
+      this.radius = ORB_PHYSICS.ORB_RADIUS * 1.15;
+    } else if (orbType === 'FROST') {
+      this.radius = ORB_PHYSICS.ORB_RADIUS * 1.05;
     }
   }
 
@@ -77,6 +85,25 @@ export class Orb {
     this.vx *= drag;
     this.vy *= drag;
 
+    // 虛空黑球 (VOID) 特殊能力：自帶重力扭曲引力場，吸引周遭釘子產生軌跡偏轉
+    if (this.orbType === 'VOID') {
+      const warpRadius = 80;
+      for (let i = 0; i < pegs.length; i++) {
+        const peg = pegs[i];
+        if (peg.isDestroyed) continue;
+        const dx = peg.x - this.x;
+        const dy = peg.y - this.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < warpRadius * warpRadius && distSq > 36) {
+          const dist = Math.sqrt(distSq);
+          // 向釘子產生輕微吸引向心加速度
+          const pullForce = (1 - dist / warpRadius) * 420;
+          this.vx += (dx / dist) * pullForce * dt;
+          this.vy += (dy / dist) * pullForce * dt;
+        }
+      }
+    }
+
     // 終端速度限制
     const speedSq = this.vx * this.vx + this.vy * this.vy;
     if (speedSq > ORB_PHYSICS.TERMINAL_VELOCITY * ORB_PHYSICS.TERMINAL_VELOCITY) {
@@ -86,7 +113,6 @@ export class Orb {
     }
 
     // 2. 連續碰撞檢測 (CCD) 亞步進 (Sub-stepping)
-    // 限制每個子步進的最大位移不超過 3.5px，徹底杜絕極速穿牆與死角穿透
     const currentSpeed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
     const maxSubStepDist = 3.5;
     const subSteps = Math.max(1, Math.min(8, Math.ceil((currentSpeed * dt) / maxSubStepDist)));
@@ -206,7 +232,8 @@ export class Orb {
 
     // 3. 記錄拖尾光軌
     this.trail.push({ x: this.x, y: this.y });
-    if (this.trail.length > (this.isOvercharged ? 16 : 12)) {
+    const maxTrailLen = this.isOvercharged ? 18 : (this.orbType === 'VOID' ? 16 : 12);
+    if (this.trail.length > maxTrailLen) {
       this.trail.shift();
     }
 
@@ -227,9 +254,17 @@ export class Orb {
         }
       } else {
         this.lowSpeedTimer = 0;
-        this.radius = this.isMiniBullet
-          ? ORB_PHYSICS.ORB_RADIUS * 0.55
-          : (this.isSecondary ? ORB_PHYSICS.ORB_RADIUS * 0.75 : ORB_PHYSICS.ORB_RADIUS);
+        if (this.isMiniBullet) {
+          this.radius = ORB_PHYSICS.ORB_RADIUS * 0.55;
+        } else if (this.isSecondary) {
+          this.radius = ORB_PHYSICS.ORB_RADIUS * 0.75;
+        } else if (this.orbType === 'VOID') {
+          this.radius = ORB_PHYSICS.ORB_RADIUS * 1.15;
+        } else if (this.orbType === 'FROST') {
+          this.radius = ORB_PHYSICS.ORB_RADIUS * 1.05;
+        } else {
+          this.radius = ORB_PHYSICS.ORB_RADIUS;
+        }
       }
 
       // 第三重：硬超時救死機制 (Hard Timeout)

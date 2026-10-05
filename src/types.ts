@@ -21,6 +21,10 @@ export type PegType =
   | 'SHIELD_CORE'
   | 'MINION';
 
+export type OrbType = 'STANDARD' | 'FROST' | 'LIGHTNING' | 'VOID';
+
+export type GameMode = 'STANDARD' | 'ENDLESS';
+
 export interface TrajectoryPoint {
   x: number;
   y: number;
@@ -34,6 +38,24 @@ export interface Relic {
   icon: string;
   iconColor: string;
   rarity: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
+}
+
+export interface SpecialOrbInfo {
+  type: OrbType;
+  name: string;
+  subtitle: string;
+  description: string;
+  icon: string;
+  color: string;
+  glowColor: string;
+}
+
+export interface ChallengeModifier {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  scoreBonusMultiplier: number;
 }
 
 export interface MonsterData {
@@ -51,17 +73,22 @@ export interface MonsterData {
   shieldMax: number;
   shieldCurrent: number;
   minionCooldown: number;
+  isEnraged?: boolean;
 }
 
 export interface OrbCascadeSave {
-  version: 2;
+  version: 3;
   highScore: number;
   highestFloor: number;
+  endlessHighScore: number;
+  endlessHighestFloor: number;
   totalRuns: number;
   totalKills: number;
   isMuted: boolean;
   highestCombo: number;
   bossShieldsBroken: number;
+  unlockedOrbs: OrbType[];
+  equippedOrb: OrbType;
 }
 
 export interface PlayroomReadyState {

@@ -14,6 +14,10 @@ export class Peg {
   public hitFlashTimer = 0; // 擊中瞬間的高光閃白計時
   public minionHp = 2; // 干擾釘專用 HP
 
+  // 寒霜晶球易傷冰凍標記
+  public isFrostbitten = false;
+  public frostTimer = 0;
+
   constructor(
     id: number,
     x: number,
@@ -57,9 +61,17 @@ export class Peg {
       this.hitFlashTimer -= dt;
       if (this.hitFlashTimer < 0) this.hitFlashTimer = 0;
     }
+    if (this.frostTimer > 0) {
+      this.frostTimer += dt * 3;
+    }
   }
 
   public triggerHitFlash(): void {
     this.hitFlashTimer = 0.28;
+  }
+
+  public applyFrost(): void {
+    this.isFrostbitten = true;
+    this.frostTimer = 0.01;
   }
 }

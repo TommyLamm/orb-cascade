@@ -1,9 +1,9 @@
-import { ORB_PHYSICS, COMBO_LADDER } from '../core/Constants';
+import { ORB_PHYSICS, COMBO_LADDER, SPECIAL_ORBS_CONFIG } from '../core/Constants';
 import { Peg } from '../entities/Peg';
 import { Orb } from '../entities/Orb';
 import { Bucket } from '../entities/Bucket';
 import { Monster } from '../entities/Monster';
-import { Relic, TrajectoryPoint, GameState, OrbCascadeSave } from '../types';
+import { Relic, TrajectoryPoint, GameState, OrbCascadeSave, OrbType, GameMode, ChallengeModifier } from '../types';
 import { ParticleSystem } from './ParticleSystem';
 import { FloatingCombatText } from './FloatingCombatText';
 
@@ -16,6 +16,18 @@ interface StarDust {
   alpha: number;
   baseAlpha: number;
   pulsePhase: number;
+}
+
+export interface GlowDecal {
+  x: number;
+  y: number;
+  color: string;
+  alpha: number;
+  maxAlpha: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  rotation: number;
 }
 
 export class CanvasRenderer {
@@ -33,6 +45,9 @@ export class CanvasRenderer {
   // 背景飄動星塵微粒
   private starDustList: StarDust[] = [];
 
+  // 釘子引爆後在盤面留下的短暫微光烙印 (Residual Glow Decals)
+  private glowDecals: GlowDecal[] = [];
+
   // 當前鼠標/觸控懸停卡牌索引
   public hoveredCardIndex = -1;
 
@@ -41,14 +56,14 @@ export class CanvasRenderer {
     if (!context) throw new Error('Canvas 2D context not supported');
     this.ctx = context;
 
-    // 初始化 65 顆深邃背景飄浮星塵
-    for (let i = 0; i < 65; i++) {
+    // 初始化 70 顆深邃背景飄浮星塵
+    for (let i = 0; i < 70; i++) {
       this.starDustList.push({
         x: Math.random() * ORB_PHYSICS.VIRTUAL_WIDTH,
         y: Math.random() * ORB_PHYSICS.VIRTUAL_HEIGHT,
         size: 1.0 + Math.random() * 2.2,
         speedX: (Math.random() - 0.5) * 12,
-        speedY: -8 - Math.random() * 20, // 緩慢向上微飄
+        speedY: -8 - Math.random() * 20,
         alpha: 0.3 + Math.random() * 0.5,
         baseAlpha: 0.3 + Math.random() * 0.4,
         pulsePhase: Math.random() * Math.PI * 2,
@@ -58,6 +73,24 @@ export class CanvasRenderer {
 
   public triggerShake(intensity: number): void {
     this.shakeIntensity = Math.max(this.shakeIntensity, intensity);
+  }
+
+  // 添加盤面微光烙印
+  public addGlowDecal(x: number, y: number, color = '#ffd700', radius = 16): void {
+    this.glowDecals.push({
+      x,
+      y,
+      color,
+      alpha: 1.0,
+      maxAlpha: 1.0,
+      radius,
+      life: 1.8,
+      maxLife: 1.8,
+      rotation: Math.random() * Math.PI * 2,
+    });
+    if (this.glowDecals.length > 40) {
+      this.glowDecals.shift();
+    }
   }
 
   public update(dt: number): void {
@@ -74,7 +107,7 @@ export class CanvasRenderer {
       }
     }
 
-    // 更新背景飄浮星塵
+    // 更新背景星塵
     const w = ORB_PHYSICS.VIRTUAL_WIDTH;
     const h = ORB_PHYSICS.VIRTUAL_HEIGHT;
     for (const star of this.starDustList) {
@@ -90,6 +123,17 @@ export class CanvasRenderer {
         star.x = w;
       } else if (star.x > w) {
         star.x = 0;
+      }
+    }
+
+    // 更新微光烙印淡出
+    for (let i = this.glowDecals.length - 1; i >= 0; i--) {
+      const d = this.glowDecals[i];
+      d.life -= dt;
+      d.rotation += dt * 0.5;
+      d.alpha = Math.max(0, d.life / d.maxLife);
+      if (d.life <= 0) {
+        this.glowDecals.splice(i, 1);
       }
     }
   }
@@ -113,7 +157,11 @@ export class CanvasRenderer {
     particles: ParticleSystem,
     combatText: FloatingCombatText,
     saveData: OrbCascadeSave,
-    draftRelics: Relic[] = []
+    draftRelics: Relic[] = [],
+    equippedOrb: OrbType = 'STANDARD',
+    unlockedOrbs: OrbType[] = ['STANDARD'],
+    gameMode: GameMode = 'STANDARD',
+    activeModifiers: readonly ChallengeModifier[] = []
   ): void {
     const ctx = this.ctx;
     const w = ORB_PHYSICS.VIRTUAL_WIDTH;
@@ -128,40 +176,55 @@ export class CanvasRenderer {
       ctx.translate(offsetX, offsetY);
     }
 
-    // 2. 清除畫布並繪製動態星雲與深邃秘境背景
-    this.renderBackground(ctx, w, h);
+    // 2. 清除畫布並繪製動態星雲與深邃秘境背景 (Boss暴怒時全場赤紅暗流)
+    this.renderBackground(ctx, w, h, monster);
 
-    // 3. 釘盤與邊界引導槽
+    // 3. 釘盤與邊界引導槽、殘留微光烙印
     this.renderBorders(ctx);
+    this.renderDecals(ctx);
     this.renderPegs(ctx, pegs, monster);
 
-    // 4. 底部移動集球桶
+    // 4. 底部移動集球桶 (Dynamic Bucket Jackpot)
     this.renderBucket(ctx, bucket);
 
-    // 5. 瞄準砲台、動態流光預測線與共振漣漪光環 (僅在瞄準狀態且有彈珠時)
+    // 5. 瞄準砲台、動態流光預測線與阻尼握柄 (僅在瞄準狀態且有彈珠時)
     if (state === 'BATTLE_AIM') {
-      this.renderAimCannon(ctx, aimAngleRad, trajectory, isAiming);
+      this.renderAimCannon(ctx, aimAngleRad, trajectory, isAiming, equippedOrb);
+      this.renderOrbSelector(ctx, equippedOrb, unlockedOrbs);
     }
 
-    // 6. 魔法彈珠繪製 (含過載電弧拖尾)
+    // 6. 魔法彈珠繪製 (4 大特殊彈珠專屬渲染)
     this.renderOrbs(ctx, orbs);
 
     // 7. 粒子系統與浮動傷害數字
     particles.render(ctx);
     combatText.render(ctx);
 
-    // 8. 頂部 HUD (血量、分數、Boss 能量護盾條、連鎖倍率、剩餘彈珠、靜音/暫停按鈕)
-    this.renderHUD(ctx, monster, floorLevel, playerHp, manaOrbs, totalScore, turnScore, comboHits, relics, saveData.isMuted);
+    // 8. 頂部 HUD (包含 Boss 狂暴演出、血條、護盾、突變因子、暫停、靜音)
+    this.renderHUD(
+      ctx,
+      monster,
+      floorLevel,
+      playerHp,
+      manaOrbs,
+      totalScore,
+      turnScore,
+      comboHits,
+      relics,
+      saveData.isMuted,
+      gameMode,
+      activeModifiers
+    );
 
-    // 9. 依據遊戲狀態繪製各視窗與疊層
-    if (state === 'TITLE') {
-      this.renderTitleScreen(ctx, w, h, saveData);
-    } else if (state === 'RELIC_DRAFT') {
+    // 9. 依據遊戲不同模態繪製彈窗 / 卡牌 Draft / 結算介面
+    if (state === 'RELIC_DRAFT') {
       this.renderRelicDraft(ctx, w, h, draftRelics);
     } else if (state === 'PAUSED') {
       this.renderPauseMenu(ctx, w, h);
+    } else if (state === 'TITLE') {
+      this.renderTitleScreen(ctx, w, h, saveData, gameMode);
     } else if (state === 'GAME_OVER') {
-      this.renderGameOver(ctx, w, h, totalScore, floorLevel, saveData);
+      this.renderGameOver(ctx, w, h, totalScore, floorLevel, saveData, gameMode);
     } else if (state === 'VICTORY') {
       this.renderVictory(ctx, w, h, totalScore, saveData);
     }
@@ -169,64 +232,65 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  // 1. 動態星雲漸層與飄動星塵背景
-  private renderBackground(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    // 基礎暗夜星空底色
-    ctx.fillStyle = '#060810';
+  // 1. 動態背景與 Boss 狂暴暗紅星雲
+  private renderBackground(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    monster: Monster
+  ): void {
+    const isEnraged = monster.isEnraged;
+
+    // 深邃背景漸層
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+    if (isEnraged) {
+      // 狂暴怒焰色調
+      const pulse = 0.5 + 0.5 * Math.sin(this.visualTime * 6);
+      bgGrad.addColorStop(0, pulse > 0.5 ? '#24060e' : '#1a050b');
+      bgGrad.addColorStop(0.35, '#2b0c15');
+      bgGrad.addColorStop(0.7, '#15060d');
+      bgGrad.addColorStop(1, '#0c0206');
+    } else {
+      bgGrad.addColorStop(0, '#070b14');
+      bgGrad.addColorStop(0.35, '#0b1326');
+      bgGrad.addColorStop(0.7, '#080d1a');
+      bgGrad.addColorStop(1, '#04070d');
+    }
+    ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // 動態深邃星雲 1 (深藍紫羅蘭)
-    const t = this.visualTime * 0.3;
-    const neb1X = w * 0.35 + Math.sin(t) * 90;
-    const neb1Y = h * 0.45 + Math.cos(t * 0.8) * 110;
-    const grad1 = ctx.createRadialGradient(neb1X, neb1Y, 40, neb1X, neb1Y, 480);
-    grad1.addColorStop(0, 'rgba(30, 27, 75, 0.45)');
-    grad1.addColorStop(0.5, 'rgba(15, 23, 42, 0.28)');
-    grad1.addColorStop(1, 'rgba(6, 8, 16, 0)');
-    ctx.fillStyle = grad1;
-    ctx.fillRect(0, 0, w, h);
-
-    // 動態深邃星雲 2 (青玉幽光)
-    const neb2X = w * 0.7 - Math.cos(t * 0.7) * 80;
-    const neb2Y = h * 0.65 + Math.sin(t * 0.9) * 90;
-    const grad2 = ctx.createRadialGradient(neb2X, neb2Y, 30, neb2X, neb2Y, 420);
-    grad2.addColorStop(0, 'rgba(12, 74, 110, 0.35)');
-    grad2.addColorStop(0.6, 'rgba(8, 47, 73, 0.15)');
-    grad2.addColorStop(1, 'rgba(6, 8, 16, 0)');
-    ctx.fillStyle = grad2;
-    ctx.fillRect(0, 0, w, h);
-
-    // 飄動星塵微粒 (Star Dust)
+    // 飄動星塵
     ctx.save();
     for (const star of this.starDustList) {
       ctx.globalAlpha = Math.max(0, Math.min(1, star.alpha));
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = isEnraged ? '#fca5a5' : '#e2e8f0';
       ctx.beginPath();
       ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
 
-    // 秘境古老神秘同心魔導陣
+    // 秘境古老同心魔導陣
     ctx.save();
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.06)';
+    const ringColor = isEnraged ? 'rgba(239, 68, 68, 0.12)' : 'rgba(56, 189, 248, 0.06)';
+    ctx.strokeStyle = ringColor;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(360, 620, 270, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.strokeStyle = 'rgba(168, 85, 247, 0.05)';
+    ctx.strokeStyle = isEnraged ? 'rgba(220, 38, 38, 0.10)' : 'rgba(168, 85, 247, 0.05)';
     ctx.beginPath();
     ctx.arc(360, 620, 170, 0, Math.PI * 2);
     ctx.stroke();
 
     // 旋轉符文微刻線
-    const ringAngle = this.visualTime * 0.08;
+    const ringAngle = this.visualTime * (isEnraged ? 0.25 : 0.08);
     ctx.save();
     ctx.translate(360, 620);
     ctx.rotate(ringAngle);
     ctx.setLineDash([8, 14]);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.strokeStyle = isEnraged ? 'rgba(254, 202, 202, 0.08)' : 'rgba(255, 255, 255, 0.04)';
     ctx.beginPath();
     ctx.arc(0, 0, 220, 0, Math.PI * 2);
     ctx.stroke();
@@ -264,7 +328,41 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  // 3. 釘盤與機關釘繪製 (弱點爆擊釘呼吸金圈、Boss 護盾核心連線、小怪干擾釘)
+  // 盤面微光烙印 (Residual Glow Imprints)
+  private renderDecals(ctx: CanvasRenderingContext2D): void {
+    if (this.glowDecals.length === 0) return;
+    ctx.save();
+    for (const d of this.glowDecals) {
+      ctx.globalAlpha = d.alpha * 0.65;
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rotation);
+
+      // 外光環
+      ctx.strokeStyle = d.color;
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(0, 0, d.radius * (1.2 + (1 - d.alpha) * 0.4), 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 星芒核心
+      ctx.fillStyle = d.color;
+      ctx.beginPath();
+      for (let i = 0; i < 4; i++) {
+        const ang = (i * Math.PI) / 2;
+        ctx.lineTo(Math.cos(ang) * (d.radius * 0.9), Math.sin(ang) * (d.radius * 0.9));
+        ctx.lineTo(Math.cos(ang + Math.PI / 4) * (d.radius * 0.3), Math.sin(ang + Math.PI / 4) * (d.radius * 0.3));
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // 3. 釘盤與機關釘繪製 (含寒霜冰凍易傷霜花特效)
   private renderPegs(ctx: CanvasRenderingContext2D, pegs: Peg[], monster: Monster): void {
     const isBossShieldUp = monster.isShieldActive();
 
@@ -281,7 +379,7 @@ export class CanvasRenderer {
         shadowColor = '#ffbb00';
         glowSize = 16 + Math.sin(peg.glowPhase) * 5;
 
-        // 弱點爆擊釘專屬：呼吸脈衝金色光圈 (外圍呼吸光環)
+        // 弱點爆擊釘專屬：呼吸脈衝金色光圈
         ctx.save();
         const pulseRatio = 0.5 + 0.5 * Math.sin(this.visualTime * 5 + peg.id);
         const pulseR = peg.radius * (1.6 + pulseRatio * 0.5);
@@ -291,15 +389,6 @@ export class CanvasRenderer {
         ctx.beginPath();
         ctx.arc(peg.x, peg.y, pulseR, 0, Math.PI * 2);
         ctx.stroke();
-
-        // 旋轉星芒小光點
-        const starAngle = this.visualTime * 2 + peg.id;
-        const starX = peg.x + Math.cos(starAngle) * (pulseR + 1);
-        const starY = peg.y + Math.sin(starAngle) * (pulseR + 1);
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(starX, starY, 1.8, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
 
       } else if (peg.type === 'SHIELD_CORE') {
@@ -316,7 +405,7 @@ export class CanvasRenderer {
           ctx.lineDashOffset = -this.aimStreamOffset;
           ctx.beginPath();
           ctx.moveTo(peg.x, peg.y);
-          ctx.lineTo(600, 40); // 頂部 Boss 護盾條位置
+          ctx.lineTo(600, 40);
           ctx.stroke();
           ctx.restore();
         }
@@ -335,7 +424,6 @@ export class CanvasRenderer {
         shadowColor = '#be123c';
         glowSize = 14 + Math.sin(peg.glowPhase * 3) * 4;
 
-        // 小怪干擾釘外刺光環
         ctx.save();
         ctx.strokeStyle = 'rgba(225, 29, 72, 0.6)';
         ctx.lineWidth = 2;
@@ -378,6 +466,37 @@ export class CanvasRenderer {
       ctx.arc(peg.x, peg.y, peg.radius, 0, Math.PI * 2);
       ctx.fill();
 
+      // 寒霜晶球冰凍易傷霜花幾何 (Frostbitten effect)
+      if (peg.isFrostbitten) {
+        ctx.save();
+        ctx.shadowColor = '#38bdf8';
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = '#bae6fd';
+        ctx.lineWidth = 2;
+        // 旋轉冰晶六角形
+        const rot = peg.frostTimer * 1.5;
+        ctx.translate(peg.x, peg.y);
+        ctx.rotate(rot);
+        ctx.beginPath();
+        for (let a = 0; a < 6; a++) {
+          const angle = (a * Math.PI) / 3;
+          const r = peg.radius + 4;
+          const px = Math.cos(angle) * r;
+          const py = Math.sin(angle) * r;
+          if (a === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('❄️', 0, 0);
+        ctx.restore();
+      }
+
       // 內核高光
       ctx.shadowBlur = 0;
       ctx.fillStyle = peg.hitFlashTimer > 0 ? '#ffffff' : (peg.isHitThisTurn ? '#64748b' : '#ffffff');
@@ -416,42 +535,82 @@ export class CanvasRenderer {
     }
   }
 
-  // 4. 移動集球桶
+  // 4. 底部移動集球桶 (Dynamic Bucket Jackpot 3 槽位動態分區)
   private renderBucket(ctx: CanvasRenderingContext2D, bucket: Bucket): void {
     ctx.save();
     const bx = bucket.x;
     const by = bucket.y;
     const bw = bucket.width;
     const bh = bucket.height;
+    const halfW = bw / 2;
 
-    // 集球桶底部發光
-    ctx.shadowColor = bucket.isFrozen ? '#38bdf8' : '#10b981';
+    const slots = bucket.getSlots();
+
+    // 集球桶底部發光與本體底座
+    ctx.shadowColor = bucket.isFrozen ? '#38bdf8' : '#ffd700';
     ctx.shadowBlur = 18;
-    ctx.fillStyle = bucket.isFrozen ? '#1e293b' : '#064e3b';
-    ctx.strokeStyle = bucket.isFrozen ? '#7dd3fc' : '#34d399';
-    ctx.lineWidth = 3;
+    ctx.fillStyle = bucket.isFrozen ? '#0f172a' : '#0a101d';
+    ctx.strokeStyle = bucket.isFrozen ? '#7dd3fc' : '#f59e0b';
+    ctx.lineWidth = 2.5;
 
     ctx.beginPath();
-    ctx.roundRect(bx - bw / 2, by - bh / 2, bw, bh, 8);
+    ctx.roundRect(bx - halfW, by - bh / 2, bw, bh, 8);
     ctx.fill();
     ctx.stroke();
-
     ctx.shadowBlur = 0;
-    ctx.fillStyle = bucket.isFrozen ? '#e0f2fe' : '#a7f3d0';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(bucket.isFrozen ? 'FROZEN' : 'FREE BALL', bx, by);
+
+    // 繪製 3 個動態槽位分區
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      const slotX = bx + slot.relativeStart * bw;
+      const slotW = (slot.relativeEnd - slot.relativeStart) * bw;
+      const slotCenter = slotX + slotW / 2;
+
+      // 槽位背景微弱高光
+      ctx.fillStyle = slot.color === '#facc15' ? 'rgba(250, 204, 21, 0.16)' : 'rgba(56, 189, 248, 0.12)';
+      ctx.fillRect(slotX + 1, by - bh / 2 + 2, slotW - 2, bh - 4);
+
+      // 分隔線
+      if (i > 0) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(slotX, by - bh / 2 + 2);
+        ctx.lineTo(slotX, by + bh / 2 - 2);
+        ctx.stroke();
+      }
+
+      // 標籤文字
+      ctx.shadowColor = slot.glowColor;
+      ctx.shadowBlur = slot.color === '#facc15' ? 10 : 6;
+      ctx.fillStyle = slot.color;
+      ctx.font = slot.color === '#facc15' ? 'bold 11px sans-serif' : 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(slot.label, slotCenter, by);
+      ctx.shadowBlur = 0;
+    }
+
+    // 集球桶上方金色指針與霓虹光效
+    const needlePhase = (this.visualTime * 5) % 1;
+    ctx.fillStyle = needlePhase > 0.5 ? '#ffd700' : '#f59e0b';
+    ctx.beginPath();
+    ctx.moveTo(bx - 8, by - bh / 2 - 3);
+    ctx.lineTo(bx + 8, by - bh / 2 - 3);
+    ctx.lineTo(bx, by - bh / 2 + 4);
+    ctx.closePath();
+    ctx.fill();
 
     ctx.restore();
   }
 
-  // 5. 瞄準砲台、動態流光預測線與落點共振漣漪光環、虛擬拉桿反饋
+  // 5. 瞄準砲台、動態流光預測線、阻尼拉桿微調握柄
   private renderAimCannon(
     ctx: CanvasRenderingContext2D,
     aimAngleRad: number,
     trajectory: TrajectoryPoint[],
-    isAiming: boolean
+    isAiming: boolean,
+    equippedOrb: OrbType
   ): void {
     const cx = ORB_PHYSICS.CANNON_X;
     const cy = ORB_PHYSICS.CANNON_Y;
@@ -460,12 +619,25 @@ export class CanvasRenderer {
 
     // 1. 動態流光 3 次折射預測線
     if (trajectory.length > 1) {
+      let lineColor = 'rgba(0, 243, 255, 0.95)';
+      let shadowCol = '#00f3ff';
+      if (equippedOrb === 'FROST') {
+        lineColor = 'rgba(125, 211, 252, 0.95)';
+        shadowCol = '#38bdf8';
+      } else if (equippedOrb === 'LIGHTNING') {
+        lineColor = 'rgba(250, 204, 21, 0.95)';
+        shadowCol = '#facc15';
+      } else if (equippedOrb === 'VOID') {
+        lineColor = 'rgba(192, 132, 252, 0.95)';
+        shadowCol = '#c084fc';
+      }
+
       ctx.lineWidth = isAiming ? 3.0 : 2.2;
       ctx.setLineDash([10, 8]);
-      ctx.lineDashOffset = -this.aimStreamOffset; // 動態奔馳流光
-      ctx.strokeStyle = isAiming ? 'rgba(0, 243, 255, 0.95)' : 'rgba(0, 243, 255, 0.55)';
-      ctx.shadowColor = '#00f3ff';
-      ctx.shadowBlur = isAiming ? 12 : 5;
+      ctx.lineDashOffset = -this.aimStreamOffset;
+      ctx.strokeStyle = lineColor;
+      ctx.shadowColor = shadowCol;
+      ctx.shadowBlur = isAiming ? 14 : 6;
 
       ctx.beginPath();
       ctx.moveTo(trajectory[0].x, trajectory[0].y);
@@ -475,7 +647,6 @@ export class CanvasRenderer {
 
         if (pt.isBounce) {
           ctx.stroke();
-          // 反彈折射點處的光標
           ctx.save();
           ctx.shadowBlur = 10;
           ctx.shadowColor = '#ffd700';
@@ -493,7 +664,7 @@ export class CanvasRenderer {
       ctx.setLineDash([]);
       ctx.shadowBlur = 0;
 
-      // 落點處增加能量共振漣漪光環 (Resonance Ripples)
+      // 落點處能量共振漣漪光環
       const lastPt = trajectory[trajectory.length - 1];
       if (lastPt) {
         ctx.save();
@@ -511,7 +682,32 @@ export class CanvasRenderer {
       }
     }
 
-    // 2. 手機與桌面操作優化：拖曳拉桿指針與弧度反饋
+    // 2. 兩側精細微調按鈕：[ ◀ 1° ] 與 [ 1° ▶ ]
+    // 左微調按鈕: [240, 150, 54, 34]
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.roundRect(240, 150, 54, 34, 6);
+    ctx.fill();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('◀ 1°', 267, 167);
+
+    // 右微調按鈕: [426, 150, 54, 34]
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.roundRect(426, 150, 54, 34, 6);
+    ctx.fill();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('1° ▶', 453, 167);
+
+    // 3. 旋轉發射砲台
     ctx.save();
     ctx.translate(cx, cy);
 
@@ -522,7 +718,6 @@ export class CanvasRenderer {
     ctx.arc(0, 0, 56, (15 * Math.PI) / 180, (165 * Math.PI) / 180);
     ctx.stroke();
 
-    // 旋轉發射砲台
     ctx.rotate(aimAngleRad);
 
     // 砲管
@@ -544,15 +739,20 @@ export class CanvasRenderer {
     ctx.stroke();
 
     // 裝填的魔法球微光
-    ctx.fillStyle = '#00f3ff';
+    let orbFill = '#00f3ff';
+    if (equippedOrb === 'FROST') orbFill = '#7dd3fc';
+    if (equippedOrb === 'LIGHTNING') orbFill = '#facc15';
+    if (equippedOrb === 'VOID') orbFill = '#c084fc';
+
+    ctx.fillStyle = orbFill;
     ctx.beginPath();
     ctx.arc(0, 0, 8, 0, Math.PI * 2);
     ctx.fill();
 
     // 瞄準時發射箭頭指引光芒
     if (isAiming) {
-      ctx.fillStyle = '#00f3ff';
-      ctx.shadowColor = '#00f3ff';
+      ctx.fillStyle = orbFill;
+      ctx.shadowColor = orbFill;
       ctx.shadowBlur = 10;
       ctx.beginPath();
       ctx.moveTo(52, 0);
@@ -566,7 +766,46 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  // 6. 魔法彈珠繪製
+  // 特殊彈珠切換膠囊面板 (Orb Selector)
+  private renderOrbSelector(ctx: CanvasRenderingContext2D, equippedOrb: OrbType, _unlockedOrbs: OrbType[]): void {
+    ctx.save();
+    // 位於 y: 195，中央排列 4 款彈珠按鈕
+    const startX = 170;
+    const btnW = 90;
+    const btnH = 34;
+    const gap = 6;
+
+    for (let i = 0; i < SPECIAL_ORBS_CONFIG.length; i++) {
+      const orbInfo = SPECIAL_ORBS_CONFIG[i];
+      const bx = startX + i * (btnW + gap);
+      const by = 195;
+      const isSelected = equippedOrb === orbInfo.type;
+
+      ctx.fillStyle = isSelected ? 'rgba(30, 41, 59, 0.95)' : 'rgba(15, 23, 42, 0.7)';
+      ctx.roundRect(bx, by, btnW, btnH, 6);
+      ctx.fill();
+
+      ctx.strokeStyle = isSelected ? orbInfo.color : '#334155';
+      ctx.lineWidth = isSelected ? 2.5 : 1.2;
+      ctx.stroke();
+
+      if (isSelected) {
+        ctx.shadowColor = orbInfo.glowColor;
+        ctx.shadowBlur = 8;
+      }
+
+      ctx.fillStyle = isSelected ? '#ffffff' : '#94a3b8';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${orbInfo.icon} ${orbInfo.name.substring(0, 2)}`, bx + btnW / 2, by + btnH / 2);
+      ctx.shadowBlur = 0;
+    }
+
+    ctx.restore();
+  }
+
+  // 6. 魔法彈珠繪製 (支援 4 款特殊彈珠外觀)
   private renderOrbs(ctx: CanvasRenderingContext2D, orbs: Orb[]): void {
     for (const orb of orbs) {
       if (orb.isDead) continue;
@@ -581,10 +820,17 @@ export class CanvasRenderer {
           const p1 = orb.trail[i];
           const p2 = orb.trail[i + 1];
           const alpha = (i / orb.trail.length) * 0.55;
+
           if (orb.isOvercharged) {
             ctx.strokeStyle = `rgba(34, 197, 94, ${alpha})`;
           } else if (orb.isMiniBullet) {
             ctx.strokeStyle = `rgba(6, 182, 212, ${alpha})`;
+          } else if (orb.orbType === 'FROST') {
+            ctx.strokeStyle = `rgba(125, 211, 252, ${alpha})`;
+          } else if (orb.orbType === 'LIGHTNING') {
+            ctx.strokeStyle = `rgba(250, 204, 21, ${alpha})`;
+          } else if (orb.orbType === 'VOID') {
+            ctx.strokeStyle = `rgba(192, 132, 252, ${alpha})`;
           } else if (orb.isSecondary) {
             ctx.strokeStyle = `rgba(245, 158, 11, ${alpha})`;
           } else {
@@ -597,15 +843,25 @@ export class CanvasRenderer {
         }
       }
 
-      // 彈珠外光暈
+      // 彈珠外光暈與顏色
       let glow = '#00f3ff';
       let ballFill = '#38bdf8';
+
       if (orb.isOvercharged) {
         glow = '#22c55e';
         ballFill = '#4ade80';
       } else if (orb.isMiniBullet) {
         glow = '#06b6d4';
         ballFill = '#67e8f9';
+      } else if (orb.orbType === 'FROST') {
+        glow = '#38bdf8';
+        ballFill = '#7dd3fc';
+      } else if (orb.orbType === 'LIGHTNING') {
+        glow = '#facc15';
+        ballFill = '#fef08a';
+      } else if (orb.orbType === 'VOID') {
+        glow = '#c084fc';
+        ballFill = '#3b0764';
       } else if (orb.isSecondary) {
         glow = '#f59e0b';
         ballFill = '#fbbf24';
@@ -618,18 +874,29 @@ export class CanvasRenderer {
       ctx.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
       ctx.fill();
 
+      // 虛空黑球特殊繪製：旋轉重力吸積盤雙環 (Accretion disk)
+      if (orb.orbType === 'VOID') {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(216, 180, 254, 0.7)';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(orb.x, orb.y, orb.radius * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       // 彈珠核心白光
       ctx.shadowBlur = 0;
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = orb.orbType === 'VOID' ? '#c084fc' : '#ffffff';
       ctx.beginPath();
-      ctx.arc(orb.x, orb.y, orb.radius * 0.5, 0, Math.PI * 2);
+      ctx.arc(orb.x, orb.y, orb.radius * 0.45, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.restore();
     }
   }
 
-  // 8. 頂部 HUD (包含 Boss 能量護盾條、暫停按鈕、音效按鈕)
+  // 8. 頂部 HUD (包含 Boss 暴怒演出、能量護盾條、暫停按鈕、音效按鈕)
   private renderHUD(
     ctx: CanvasRenderingContext2D,
     monster: Monster,
@@ -640,15 +907,17 @@ export class CanvasRenderer {
     turnScore: number,
     comboHits: number,
     relics: readonly Relic[],
-    isMuted: boolean
+    isMuted: boolean,
+    gameMode: GameMode,
+    activeModifiers: readonly ChallengeModifier[]
   ): void {
     ctx.save();
 
     // 頂部儀表板背景黑框
-    ctx.fillStyle = 'rgba(8, 12, 22, 0.94)';
+    ctx.fillStyle = monster.isEnraged ? 'rgba(24, 6, 12, 0.95)' : 'rgba(8, 12, 22, 0.94)';
     ctx.fillRect(0, 0, ORB_PHYSICS.VIRTUAL_WIDTH, 140);
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = monster.isEnraged ? '#ef4444' : '#1e293b';
+    ctx.lineWidth = monster.isEnraged ? 2 : 1;
     ctx.beginPath();
     ctx.moveTo(0, 140);
     ctx.lineTo(ORB_PHYSICS.VIRTUAL_WIDTH, 140);
@@ -674,15 +943,28 @@ export class CanvasRenderer {
 
     // 2. 樓層資訊 (FLOOR)
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#38bdf8';
+    ctx.fillStyle = gameMode === 'ENDLESS' ? '#f59e0b' : '#38bdf8';
     ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`FLOOR ${floorLevel < 10 ? '0' + floorLevel : floorLevel} / 10`, 360, 26);
+    const floorLabel = gameMode === 'ENDLESS'
+      ? `SPIRAL FLOOR ${floorLevel}`
+      : `FLOOR ${floorLevel < 10 ? '0' + floorLevel : floorLevel} / 10`;
+    ctx.fillText(floorLabel, 360, 26);
 
-    // 3. 怪物名稱與血量條
+    // 突變因子徽章
+    if (activeModifiers.length > 0) {
+      let modStr = '';
+      for (const m of activeModifiers) modStr += `${m.icon} `;
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(modStr.trim(), 360, 42);
+    }
+
+    // 3. 怪物名稱與血量條 (Boss 暴怒特效)
     ctx.textAlign = 'right';
-    ctx.fillStyle = monster.data.isBoss ? '#f43f5e' : '#cbd5e1';
+    ctx.fillStyle = monster.isEnraged ? '#ff0033' : (monster.data.isBoss ? '#f43f5e' : '#cbd5e1');
     ctx.font = 'bold 13px sans-serif';
-    ctx.fillText(monster.data.name, 696, 26);
+    const bossTitle = monster.isEnraged ? `🔥 [ENRAGED] ${monster.data.name}` : monster.data.name;
+    ctx.fillText(bossTitle, 696, 26);
 
     const mHpW = 160;
     const mHpH = 14;
@@ -691,14 +973,16 @@ export class CanvasRenderer {
     ctx.fillRect(mHpX, 34, mHpW, mHpH);
 
     const mRatio = Math.max(0, monster.data.currentHp / monster.data.maxHp);
-    ctx.fillStyle = monster.hurtTimer > 0 ? '#ffffff' : (monster.data.isBoss ? '#e11d48' : '#8b5cf6');
+    ctx.fillStyle = monster.hurtTimer > 0
+      ? '#ffffff'
+      : (monster.isEnraged ? '#ff0044' : (monster.data.isBoss ? '#e11d48' : '#8b5cf6'));
     ctx.fillRect(mHpX, 34, mHpW * mRatio, mHpH);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 11px sans-serif';
     ctx.fillText(`${monster.data.currentHp} / ${monster.data.maxHp}`, 690, 45);
 
-    // Boss 能量護盾條 (若 Boss 有護盾)
+    // Boss 能量護盾條
     if (monster.data.isBoss && monster.data.hasShield) {
       ctx.textAlign = 'right';
       ctx.fillStyle = '#38bdf8';
@@ -707,13 +991,12 @@ export class CanvasRenderer {
       for (let s = 0; s < monster.data.shieldCurrent; s++) shieldIcons += '🛡️';
       ctx.fillText(`SHIELD (${monster.data.shieldCurrent}/${monster.data.shieldMax}) ${shieldIcons}`, 696, 62);
     } else {
-      // 怪物攻擊倒數計時圖標
-      ctx.fillStyle = '#f59e0b';
+      ctx.fillStyle = monster.isEnraged ? '#ef4444' : '#f59e0b';
       ctx.font = 'bold 12px sans-serif';
       ctx.fillText(`⚔️ 倒數 ${monster.data.currentCountdown} 回合`, 696, 64);
     }
 
-    // 4. 剩餘魔法彈珠 (Mana Orbs)
+    // 4. 剩餘魔法彈珠
     ctx.textAlign = 'left';
     ctx.fillStyle = '#94a3b8';
     ctx.font = 'bold 12px sans-serif';
@@ -727,7 +1010,7 @@ export class CanvasRenderer {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd700';
     ctx.font = 'bold 15px sans-serif';
-    ctx.fillText(`SCORE: ${totalScore.toLocaleString()}`, 360, 52);
+    ctx.fillText(`SCORE: ${totalScore.toLocaleString()}`, 360, 58);
 
     let comboMultiplier = 1.0;
     let comboLabel = 'CASCADE';
@@ -743,10 +1026,10 @@ export class CanvasRenderer {
     if (comboHits > 0) {
       ctx.fillStyle = comboColor;
       ctx.font = 'bold 16px sans-serif';
-      ctx.fillText(`${comboHits}x [${comboMultiplier.toFixed(2)}x] ${comboLabel}`, 360, 78);
+      ctx.fillText(`${comboHits}x [${comboMultiplier.toFixed(2)}x] ${comboLabel}`, 360, 84);
       ctx.fillStyle = '#94a3b8';
       ctx.font = '12px sans-serif';
-      ctx.fillText(`本輪累積傷害: +${turnScore}`, 360, 96);
+      ctx.fillText(`本輪累積傷害: +${turnScore}`, 360, 102);
     }
 
     // 6. 已裝備遺物圖示列
@@ -764,7 +1047,6 @@ export class CanvasRenderer {
     }
 
     // 7. 右上角按鈕組：暫停按鈕 [598, 92, 44, 30] 與 靜音開關 [652, 92, 44, 30]
-    // 暫停按鈕
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(30, 41, 59, 0.85)';
     ctx.fillRect(598, 92, 44, 30);
@@ -774,7 +1056,6 @@ export class CanvasRenderer {
     ctx.font = '14px sans-serif';
     ctx.fillText('⏸️', 620, 112);
 
-    // 靜音按鈕
     ctx.fillStyle = 'rgba(30, 41, 59, 0.85)';
     ctx.fillRect(652, 92, 44, 30);
     ctx.strokeStyle = '#475569';
@@ -786,7 +1067,7 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  // 9. 重新打磨的 3 選 1 遺物抽卡介面 (幾何邊框、稀有度光暈、懸停反饋)
+  // 9. 3 選 1 遺物抽卡介面
   private renderRelicDraft(
     ctx: CanvasRenderingContext2D,
     w: number,
@@ -797,7 +1078,6 @@ export class CanvasRenderer {
     ctx.fillStyle = 'rgba(4, 6, 14, 0.94)';
     ctx.fillRect(0, 0, w, h);
 
-    // 標題與裝飾
     ctx.textAlign = 'center';
     ctx.shadowColor = '#ffd700';
     ctx.shadowBlur = 22;
@@ -820,8 +1100,7 @@ export class CanvasRenderer {
       const y = cardY + i * cardSpacing;
       const isHovered = this.hoveredCardIndex === i;
 
-      // 稀有度色彩定義
-      let rarityColor = '#10b981'; // COMMON
+      let rarityColor = '#10b981';
       let rarityLabel = 'COMMON';
       if (relic.rarity === 'RARE') {
         rarityColor = '#38bdf8';
@@ -835,17 +1114,14 @@ export class CanvasRenderer {
       }
 
       ctx.save();
-
-      // 卡牌外光暈 (稀有度光暈 + 懸停加強)
       ctx.shadowColor = rarityColor;
       ctx.shadowBlur = isHovered ? 28 : 14;
 
-      // 精緻幾何切角邊框卡牌
       const cx = 85;
       const cy = y;
       const cw = cardW;
       const ch = cardH;
-      const cut = 16; // 斜切角大小
+      const cut = 16;
 
       ctx.beginPath();
       ctx.moveTo(cx + cut, cy);
@@ -858,52 +1134,36 @@ export class CanvasRenderer {
       ctx.lineTo(cx, cy + cut);
       ctx.closePath();
 
-      // 底板漸層
       const cardGrad = ctx.createLinearGradient(cx, cy, cx + cw, cy + ch);
       cardGrad.addColorStop(0, isHovered ? '#1e293b' : '#0f172a');
       cardGrad.addColorStop(1, '#070c18');
       ctx.fillStyle = cardGrad;
       ctx.fill();
 
-      // 雙層幾何科技邊框
       ctx.strokeStyle = rarityColor;
       ctx.lineWidth = isHovered ? 3.0 : 2.0;
       ctx.stroke();
 
-      // 內部裝飾小切角
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cx + 8, cy + 24);
-      ctx.lineTo(cx + 8, cy + 8);
-      ctx.lineTo(cx + 24, cy + 8);
-      ctx.stroke();
-
-      // 遺物圖示
       ctx.font = '38px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(relic.icon, cx + 55, cy + 70);
 
-      // 遺物名稱
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 21px sans-serif';
       ctx.fillText(relic.name, cx + 105, cy + 46);
 
-      // 稀有度光芒徽章
       ctx.fillStyle = rarityColor;
       ctx.font = 'bold 12px sans-serif';
       const nameWidth = ctx.measureText(relic.name).width;
       ctx.fillText(`[${rarityLabel}]`, cx + 115 + nameWidth, cy + 46);
 
-      // 遺物描述文字
       ctx.fillStyle = '#94a3b8';
       ctx.font = '14px sans-serif';
       ctx.fillText(relic.description, cx + 105, cy + 80);
 
-      // 點擊選擇按鈕導引
       ctx.fillStyle = isHovered ? '#ffffff' : rarityColor;
       ctx.font = 'bold 13px sans-serif';
       ctx.fillText(isHovered ? '★ 點擊立即裝備 ★' : '▶ 點擊選擇此遺物', cx + 105, cy + 112);
@@ -968,12 +1228,13 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  // 首頁標題螢幕
+  // 首頁標題螢幕 (支援模式選擇與突變因子說明)
   private renderTitleScreen(
     ctx: CanvasRenderingContext2D,
     w: number,
     h: number,
-    saveData: OrbCascadeSave
+    saveData: OrbCascadeSave,
+    selectedMode: GameMode
   ): void {
     ctx.save();
     ctx.fillStyle = 'rgba(6, 8, 16, 0.88)';
@@ -982,7 +1243,7 @@ export class CanvasRenderer {
     // 裝飾外框
     ctx.strokeStyle = 'rgba(0, 243, 255, 0.4)';
     ctx.lineWidth = 2;
-    ctx.strokeRect(40, 180, w - 80, h - 360);
+    ctx.strokeRect(40, 160, w - 80, h - 300);
 
     // 標題文字
     ctx.textAlign = 'center';
@@ -990,60 +1251,84 @@ export class CanvasRenderer {
     ctx.shadowBlur = 24;
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 44px sans-serif';
-    ctx.fillText('彈珠秘境', w / 2, 280);
+    ctx.fillText('彈珠秘境', w / 2, 245);
 
     ctx.fillStyle = '#ffd700';
     ctx.font = 'bold 36px sans-serif';
     ctx.shadowColor = '#ffd700';
     ctx.shadowBlur = 18;
-    ctx.fillText('連鎖共鳴', w / 2, 335);
+    ctx.fillText('連鎖共鳴', w / 2, 300);
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#38bdf8';
     ctx.font = 'bold 15px sans-serif';
-    ctx.fillText('ORB CASCADE • ROGUELIKE PINBALL v1.1.0', w / 2, 375);
+    ctx.fillText('ORB CASCADE • ROGUELIKE PINBALL v1.2.0', w / 2, 335);
 
     // 歷史最佳紀錄面板
     ctx.fillStyle = 'rgba(30, 41, 59, 0.7)';
-    ctx.roundRect(140, 420, 440, 110, 10);
+    ctx.roundRect(140, 365, 440, 105, 10);
     ctx.fill();
     ctx.strokeStyle = '#475569';
     ctx.stroke();
 
     ctx.fillStyle = '#94a3b8';
-    ctx.font = '14px sans-serif';
-    ctx.fillText('— 歷史探險成就 —', w / 2, 450);
+    ctx.font = '13px sans-serif';
+    ctx.fillText('— 歷史探險成就 —', w / 2, 390);
 
     ctx.fillStyle = '#facc15';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillText(`最高得分: ${saveData.highScore.toLocaleString()}`, w / 2, 480);
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(`標準最高分: ${saveData.highScore.toLocaleString()} (第 ${saveData.highestFloor} 層)`, w / 2, 418);
 
     ctx.fillStyle = '#38bdf8';
     ctx.font = '14px sans-serif';
-    ctx.fillText(`最深探索: 第 ${saveData.highestFloor} 層  |  累計擊殺: ${saveData.totalKills} 隻`, w / 2, 510);
+    ctx.fillText(`無盡螺旋最高分: ${(saveData.endlessHighScore || 0).toLocaleString()} (第 ${saveData.endlessHighestFloor || 1} 層)`, w / 2, 445);
 
-    // 開始遊戲按鈕
-    ctx.shadowColor = '#00f3ff';
+    // 模式選擇雙切換按鈕 [160, 490, 190, 50] vs [370, 490, 190, 50]
+    const isStd = selectedMode === 'STANDARD';
+    // 標準模式
+    ctx.fillStyle = isStd ? '#0284c7' : '#1e293b';
+    ctx.roundRect(160, 490, 190, 50, 10);
+    ctx.fill();
+    ctx.strokeStyle = isStd ? '#38bdf8' : '#475569';
+    ctx.lineWidth = isStd ? 2.5 : 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('🏰 標準秘境', 255, 522);
+
+    // 無盡螺旋模式
+    ctx.fillStyle = !isStd ? '#d97706' : '#1e293b';
+    ctx.roundRect(370, 490, 190, 50, 10);
+    ctx.fill();
+    ctx.strokeStyle = !isStd ? '#f59e0b' : '#475569';
+    ctx.lineWidth = !isStd ? 2.5 : 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('🌀 無盡螺旋', 465, 522);
+
+    // 開始遊戲按鈕 [180, 565, 360, 68]
+    ctx.shadowColor = isStd ? '#00f3ff' : '#f59e0b';
     ctx.shadowBlur = 20;
-    ctx.fillStyle = '#0284c7';
-    ctx.roundRect(180, 580, 360, 68, 14);
+    ctx.fillStyle = isStd ? '#0284c7' : '#d97706';
+    ctx.roundRect(180, 565, 360, 68, 14);
     ctx.fill();
 
     ctx.shadowBlur = 0;
-    ctx.strokeStyle = '#38bdf8';
+    ctx.strokeStyle = isStd ? '#38bdf8' : '#fcd34d';
     ctx.lineWidth = 3;
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 26px sans-serif';
-    ctx.fillText('START RUN (開始探險)', w / 2, 622);
+    ctx.fillText('START RUN (開始探險)', w / 2, 608);
 
     // 玩法指引
     ctx.fillStyle = '#94a3b8';
     ctx.font = '13px sans-serif';
-    ctx.fillText('滑鼠拖曳或手機觸控拉桿瞄準，鬆手發射魔法彈珠', w / 2, 700);
-    ctx.fillText('擊破弱點釘引發 3 倍爆擊，落入移動集球桶可保留彈珠！', w / 2, 725);
-    ctx.fillText('擊破 Boss 護盾核心釘以瓦解其無敵力場，迎擊 10 層巨獸！', w / 2, 750);
+    ctx.fillText('新增「寒霜/混沌雷球/虛空」三大專屬彈珠，隨時在發射台切換！', w / 2, 665);
+    ctx.fillText('底部滑動集球桶具備「動態 Jackpot 倍率槽」，接住贏取金色禮花！', w / 2, 690);
+    ctx.fillText('Boss 血量低於 30% 觸發狂暴咆哮，請全力連鎖破盾擊潰！', w / 2, 715);
 
     ctx.restore();
   }
@@ -1055,7 +1340,8 @@ export class CanvasRenderer {
     h: number,
     finalScore: number,
     floorLevel: number,
-    saveData: OrbCascadeSave
+    saveData: OrbCascadeSave,
+    gameMode: GameMode
   ): void {
     ctx.save();
     ctx.fillStyle = 'rgba(15, 5, 10, 0.93)';
@@ -1071,9 +1357,9 @@ export class CanvasRenderer {
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#cbd5e1';
     ctx.font = '18px sans-serif';
-    ctx.fillText(`你在秘境第 ${floorLevel} 層力竭倒下...`, w / 2, 400);
+    const modeLabel = gameMode === 'ENDLESS' ? '無盡螺旋' : '秘境';
+    ctx.fillText(`你在${modeLabel}第 ${floorLevel} 層力竭倒下...`, w / 2, 400);
 
-    // 成績清單
     ctx.fillStyle = 'rgba(30, 41, 59, 0.8)';
     ctx.roundRect(140, 440, 440, 160, 12);
     ctx.fill();
@@ -1086,8 +1372,9 @@ export class CanvasRenderer {
 
     ctx.fillStyle = '#94a3b8';
     ctx.font = '15px sans-serif';
-    ctx.fillText(`歷史最高分: ${saveData.highScore.toLocaleString()}`, w / 2, 530);
-    ctx.fillText(`最深探索層數: 第 ${saveData.highestFloor} 層`, w / 2, 565);
+    const bestScore = gameMode === 'ENDLESS' ? (saveData.endlessHighScore || 0) : saveData.highScore;
+    ctx.fillText(`該模式最高分: ${bestScore.toLocaleString()}`, w / 2, 530);
+    ctx.fillText(`最深探索層數: 第 ${floorLevel} 層`, w / 2, 565);
 
     // 重新挑戰按鈕 [200, 650, 320, 64]
     ctx.fillStyle = '#dc2626';

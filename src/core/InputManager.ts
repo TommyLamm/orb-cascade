@@ -3,8 +3,12 @@ import { ORB_PHYSICS } from './Constants';
 export class InputManager {
   public isAiming = false;
   public aimAngleRad = Math.PI / 2; // 正下方 90 度
+  public targetAimAngle = Math.PI / 2;
   public launchRequested = false;
   public hoverPos: { x: number; y: number } = { x: -1, y: -1 };
+
+  // 虛擬握柄位置與阻尼拉力
+  public gripPullDistance = 0;
 
   // 點擊事件監聽（用於按鈕點擊）
   public clickEventQueue: { x: number; y: number }[] = [];
@@ -25,9 +29,21 @@ export class InputManager {
       // 先將點擊座標記錄進佇列
       this.clickEventQueue.push(pos);
 
-      // 若點擊在頂部 HUD 控制區 (y <= 135)，不啟動彈珠發射瞄準
+      // 若點擊在頂部 HUD 控制區 (y <= 135) 或微調握柄按鈕區，不啟動拖曳發射
       if (pos.y <= 135) {
         return;
+      }
+
+      // 微調按鈕檢測：左微調 [250, 160, 48, 36], 右微調 [422, 160, 48, 36]
+      if (pos.y >= 148 && pos.y <= 198) {
+        if (pos.x >= 240 && pos.x <= 295) {
+          this.nudgeAim(-0.02); // 逆時針微調約 1.15 度
+          return;
+        }
+        if (pos.x >= 425 && pos.x <= 480) {
+          this.nudgeAim(0.02); // 順時針微調約 1.15 度
+          return;
+        }
       }
 
       this.isAiming = true;
@@ -105,7 +121,27 @@ export class InputManager {
     if (angle < minAngle) angle = minAngle;
     if (angle > maxAngle) angle = maxAngle;
 
-    this.aimAngleRad = angle;
+    this.targetAimAngle = angle;
+
+    // 記錄觸控拉伸阻尼深度 (0 到 150px)
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    this.gripPullDistance = Math.min(150, Math.max(30, dist));
+  }
+
+  // 阻尼更新循環
+  public update(dt: number): void {
+    // 平滑阻尼插值 (Damping Smooth Interpolation)
+    const diff = this.targetAimAngle - this.aimAngleRad;
+    const dampingFactor = Math.min(1, dt * 18);
+    this.aimAngleRad += diff * dampingFactor;
+  }
+
+  // 精細微調按鈕：增加或減少微量發射角度
+  public nudgeAim(deltaRad: number): void {
+    const minAngle = (15 * Math.PI) / 180;
+    const maxAngle = (165 * Math.PI) / 180;
+    this.targetAimAngle = Math.max(minAngle, Math.min(maxAngle, this.targetAimAngle + deltaRad));
+    this.aimAngleRad = this.targetAimAngle;
   }
 
   public cancelAim(): void {

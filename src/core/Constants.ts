@@ -1,4 +1,4 @@
-import { MonsterData, Relic } from '../types';
+import { MonsterData, Relic, SpecialOrbInfo, ChallengeModifier } from '../types';
 
 export const ORB_PHYSICS = {
   // 空間與視口
@@ -56,7 +56,70 @@ export const COMBO_LADDER = [
   { minHits: 40, maxHits: 9999, multiplier: 5.0, label: 'HYPER CASCADE!', color: '#ffeb3b' },
 ];
 
-export const MONSTERS_CONFIG: readonly Omit<MonsterData, 'currentHp' | 'currentCountdown' | 'shieldCurrent'>[] = [
+export const SPECIAL_ORBS_CONFIG: readonly SpecialOrbInfo[] = [
+  {
+    type: 'STANDARD',
+    name: '奧術魔彈',
+    subtitle: 'Standard Orb',
+    description: '純粹奧術能量鑄造，具備均衡的反彈物理與速度。',
+    icon: '🔮',
+    color: '#00f3ff',
+    glowColor: '#38bdf8',
+  },
+  {
+    type: 'FROST',
+    name: '寒霜晶球',
+    subtitle: 'Frost Orb',
+    description: '撞擊釘子附加冰凍易傷，下一次撞擊傷害高達 250%！',
+    icon: '❄️',
+    color: '#7dd3fc',
+    glowColor: '#38bdf8',
+  },
+  {
+    type: 'LIGHTNING',
+    name: '混沌雷球',
+    subtitle: 'Lightning Orb',
+    description: '每次彈跳在空中隨機跳躍電弧穿透 2 顆遠處釘子。',
+    icon: '⚡',
+    color: '#facc15',
+    glowColor: '#eab308',
+  },
+  {
+    type: 'VOID',
+    name: '虛空黑球',
+    subtitle: 'Void Orb',
+    description: '自帶重力扭曲光環，掠過釘子時直接吸附偏轉彈道。',
+    icon: '🌀',
+    color: '#c084fc',
+    glowColor: '#a855f7',
+  },
+];
+
+export const CHALLENGE_MODIFIERS: readonly ChallengeModifier[] = [
+  {
+    id: 'CHAOS_STORM',
+    name: '混沌風暴',
+    description: '彈珠重力微增，空中偶發隨機側向擾動力場，得分加成 +30%',
+    icon: '🌪️',
+    scoreBonusMultiplier: 1.3,
+  },
+  {
+    id: 'HARDENED_PEGS',
+    name: '釘刺硬化',
+    description: '怪物每層額外生成 1 顆能量護盾核心釘，得分加成 +40%',
+    icon: '🛡️',
+    scoreBonusMultiplier: 1.4,
+  },
+  {
+    id: 'FRENZY_PACE',
+    name: '首領狂亂',
+    description: '全場怪物攻擊倒數 -1 回合，但 Combo 連鎖分數倍率 +50%',
+    icon: '🔥',
+    scoreBonusMultiplier: 1.5,
+  },
+];
+
+export const MONSTERS_CONFIG: readonly Omit<MonsterData, 'currentHp' | 'currentCountdown' | 'shieldCurrent' | 'isEnraged'>[] = [
   {
     floor: 1,
     name: '幽林史萊姆',
@@ -288,7 +351,7 @@ export const ALL_RELICS: readonly Relic[] = [
     rarity: 'LEGENDARY',
   },
 
-  // v1.1.0 新增 4 款強力協同遺物
+  // v1.1.0 協同遺物
   {
     id: 'overcharge-battery',
     name: '過載電池',

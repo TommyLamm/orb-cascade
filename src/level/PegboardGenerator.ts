@@ -2,7 +2,7 @@ import { Peg } from '../entities/Peg';
 import { ORB_PHYSICS, MONSTERS_CONFIG } from '../core/Constants';
 
 export class PegboardGenerator {
-  public static generate(floorLevel: number): Peg[] {
+  public static generate(floorLevel: number, extraShieldCore = false): Peg[] {
     const pegs: Peg[] = [];
     let idCounter = 1;
 
@@ -27,12 +27,12 @@ export class PegboardGenerator {
     }
 
     // 分配特殊機關釘
-    this.assignSpecialPegs(pegs, floorLevel);
+    this.assignSpecialPegs(pegs, floorLevel, extraShieldCore);
 
     return pegs;
   }
 
-  private static assignSpecialPegs(pegs: Peg[], floorLevel: number): void {
+  private static assignSpecialPegs(pegs: Peg[], floorLevel: number, extraShieldCore = false): void {
     const total = pegs.length;
     if (total === 0) return;
 
@@ -49,12 +49,13 @@ export class PegboardGenerator {
     let ptr = 0;
 
     // 0. Boss 能量護盾核心釘 (SHIELD_CORE)
-    if (monsterCfg.hasShield && monsterCfg.shieldMax > 0) {
+    const shieldMax = (monsterCfg.hasShield ? monsterCfg.shieldMax : 0) + (extraShieldCore ? 1 : 0);
+    if (shieldMax > 0) {
       // 挑選位於盤面中央戰略要地的釘子 (y: 450 ~ 750)
       const coreCandidates = pegs.filter((p) => p.y >= 450 && p.y <= 750 && p.x >= 150 && p.x <= 570);
       let placedShieldCores = 0;
       for (const p of coreCandidates) {
-        if (placedShieldCores >= monsterCfg.shieldMax) break;
+        if (placedShieldCores >= shieldMax) break;
         p.type = 'SHIELD_CORE';
         p.radius = ORB_PHYSICS.SHIELD_CORE_RADIUS;
         placedShieldCores++;
