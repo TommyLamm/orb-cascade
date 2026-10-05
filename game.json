@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "orb-cascade",
+  "name": "彈珠秘境：連鎖共鳴",
+  "version": "1.0.0",
+  "description": "物理彈射與柏青哥釘盤的奇幻碰撞！拉桿瞄準發射魔法彈珠，引爆弱點釘與炸藥桶，奏響清脆音階連鎖，收集肉鴿神祕遺物擊潰秘境巨獸！",
+  "author": "Playroom Arcade Studio",
+  "entry": "index.html",
+  "cover": "cover.png",
+  "tags": ["街機", "彈射", "柏青哥", "肉鴿", "物理"],
+  "instructions": "滑鼠拖曳或手機觸控拉桿調整發射角度，鬆開確認發射魔法彈珠；在釘盤中撞擊弱點釘與機關引發連鎖，彈珠掉入底部移動集球桶可獲得免費球！",
+  "devices": ["desktop", "mobile"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "orb-cascade",
+  "version": "1.0.0",
+  "description": "彈珠秘境：連鎖共鳴 (Orb Cascade) - 物理彈射 × 柏青哥連鎖消除 × 肉鴿遺物",
+  "author": "TommyLam",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}
